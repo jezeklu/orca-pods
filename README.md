@@ -88,6 +88,17 @@ Paste `acl.hujson` into the Tailscale admin console before the first login. It r
 ./dev.sh
 ```
 
+## CI/CD
+
+`.github/workflows/image.yml` builds the image, smoke-tests it and publishes it to Docker Hub with the tags `latest` and a date. Set these repository secrets:
+
+| Name | Value |
+|---|---|
+| `DOCKERHUB_USERNAME` | Docker Hub user |
+| `DOCKERHUB_TOKEN` | Access token with Read & Write |
+
+Forks publish elsewhere by changing `IMAGE` in the workflow and setting `PODS_IMAGE` on the host.
+
 ## License
 
 [MIT](LICENSE)
