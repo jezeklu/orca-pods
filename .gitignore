@@ -1,0 +1,6 @@
+vault/
+vault-open/
+.local/
+*.appimage
+client.env
+dist/

@@ -1,0 +1,22 @@
+// Tailscale policy for orca-pods. Replaces the default allow-all policy in the admin console.
+{
+  "tagOwners": {
+    "tag:orca-client": ["autogroup:admin"],
+    "tag:orca-server": ["autogroup:admin"]
+  },
+
+  "grants": [
+    // Personal devices keep reaching each other.
+    { "src": ["autogroup:member"], "dst": ["autogroup:self"], "ip": ["*"] },
+    // Personal devices may use the Orca server.
+    { "src": ["autogroup:member"], "dst": ["tag:orca-server"], "ip": ["tcp:6768"] },
+    // The client reaches only the Orca port. The server reaches nothing.
+    { "src": ["tag:orca-client"], "dst": ["tag:orca-server"], "ip": ["tcp:6768"] }
+  ],
+
+  // Checked on save: a policy that breaks the isolation is rejected.
+  "tests": [
+    { "src": "tag:orca-client", "accept": ["tag:orca-server:6768"], "deny": ["tag:orca-server:22"] },
+    { "src": "tag:orca-server", "deny": ["tag:orca-client:6768", "tag:orca-client:22", "tag:orca-server:22"] }
+  ]
+}
