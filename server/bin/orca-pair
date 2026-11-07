@@ -1,0 +1,31 @@
+#!/bin/bash
+# Prints one pairing code per address. The code is base64 JSON with a single endpoint field.
+#   orca-pair [--mobile] ws://address:port…
+set -euo pipefail
+RUN=/tmp/orca-serve
+args=""
+if [ "${1:-}" = --mobile ]; then args=--mobile-pairing; shift; fi
+[ "$#" -gt 0 ] || { echo "Missing address." >&2; exit 1; }
+
+rm -f "$RUN/pair.json"
+echo "$args" >"$RUN/pair"
+orca-restart
+for try in $(seq 90); do
+  [ -f "$RUN/pair.json" ] && break
+  [ -f "$RUN/pair" ] && [ $((try % 15)) -eq 0 ] && orca-restart
+  sleep 1
+done
+[ -f "$RUN/pair.json" ] || { echo "No pairing code appeared." >&2; exit 1; }
+code=$(jq -r '.. | strings | select(startswith("orca://"))' "$RUN/pair.json" | head -n 1)
+rm -f "$RUN/pair.json"
+[ -n "$code" ] || { echo "No pairing code appeared." >&2; exit 1; }
+
+prefix=${code%%=*}=
+payload=${code#*=}
+pad=$(( (4 - ${#payload} % 4) % 4 ))
+json=$(printf '%s%*s' "$payload" "$pad" '' | tr ' ' '=' | tr '_-' '/+' | base64 -d)
+for endpoint in "$@"; do
+  new=$(jq -c --arg e "$endpoint" '.endpoint = $e' <<<"$json" | base64 -w0 | tr '/+' '_-' | tr -d '=')
+  echo "$endpoint"
+  echo "$prefix$new"
+done

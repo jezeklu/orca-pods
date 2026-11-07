@@ -1,0 +1,3 @@
+#!/bin/sh
+# Ends serve in any phase, orca-serve starts it again. Terminals survive, they run in their own daemon.
+pkill -TERM -f 'serve-supervisor' || pkill -TERM -f -- '--no-sandbox serve' || true

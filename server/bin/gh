@@ -1,0 +1,22 @@
+#!/bin/bash
+# Picks the token by the repository in use: --repo first, then origin, then default.token.
+owner=""
+prev=""
+for arg in "$@"; do
+  case "$prev" in -R|--repo) owner=${arg%%/*} ;; esac
+  case "$arg" in --repo=*) owner=${arg#--repo=}; owner=${owner%%/*} ;; esac
+  prev=$arg
+done
+if [ -z "$owner" ]; then
+  url=$(git remote get-url origin 2>/dev/null || true)
+  if [[ "$url" =~ github\.com[:/]([^/]+)/ ]]; then owner=${BASH_REMATCH[1]}; fi
+fi
+owner=$(tr 'A-Z' 'a-z' <<<"$owner")
+case "$owner" in ""|*[!a-z0-9-]*) owner=default ;; esac
+file=/secrets/github/$owner.token
+[ -r "$file" ] || file=/secrets/github/default.token
+if [ -r "$file" ]; then
+  GH_TOKEN=$(cat "$file")
+  export GH_TOKEN
+fi
+exec /usr/bin/gh "$@"

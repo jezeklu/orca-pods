@@ -1,0 +1,6 @@
+#!/bin/sh
+# PID 1. A shell, because it also has to reap what the terminal daemon leaves behind.
+tailscaled --statedir=/state &
+pid=$!
+trap 'kill "$pid"' TERM INT
+wait "$pid"

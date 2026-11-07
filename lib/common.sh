@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# Shared by the role scripts. The caller sets ROLE before this file is loaded.
+# Shared by orca-client and orca-server. The caller sets ROLE before this file is loaded.
 
 set -eu
 
@@ -22,7 +22,10 @@ case "$INSTANCE" in
   ""|*[!a-z0-9-]*|-*|secrets) echo "Invalid instance name '$INSTANCE', use lowercase letters, digits and dashes." >&2; exit 1 ;;
 esac
 
-tag=latest
+case "$ROLE" in
+  server) tag=server ;;
+  *) tag=latest ;;
+esac
 IMAGE="${PODS_IMAGE:-docker.io/jezeklu/orca-pods:$tag}"
 PULL="${PODS_PULL:-1}"
 STORE="${PODS_STORE:-${XDG_DATA_HOME:-$HOME/.local/share}/orca-pods}/$INSTANCE"

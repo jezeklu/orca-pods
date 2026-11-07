@@ -1,0 +1,14 @@
+# Host identity first, then what has to differ inside the container.
+[include]
+	path = /etc/orca-pods/host.gitconfig
+[commit]
+	gpgsign = false
+[tag]
+	gpgsign = false
+[credential]
+	helper =
+	helper = /usr/local/bin/git-credential-pods
+	useHttpPath = true
+[url "https://github.com/"]
+	insteadOf = git@github.com:
+	insteadOf = ssh://git@github.com/

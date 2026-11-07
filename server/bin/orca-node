@@ -1,0 +1,28 @@
+#!/bin/bash
+# Node versions next to the image one, kept in the home directory.
+#   orca-node [--update] 24 22
+# Registers the image Node with fnm, so a matching .nvmrc needs no download.
+set -u
+update=0
+if [ "${1:-}" = --update ]; then update=1; shift; fi
+
+mkdir -p "$FNM_DIR/node-versions"
+find "$FNM_DIR/node-versions" -mindepth 2 -maxdepth 2 -xtype l -delete
+find "$FNM_DIR/node-versions" -mindepth 1 -maxdepth 1 -type d -empty -delete
+image=$(/opt/node/bin/node --version)
+mkdir -p "$FNM_DIR/node-versions/$image"
+ln -sfn /opt/node "$FNM_DIR/node-versions/$image/installation"
+
+fails=0
+for major in "$@"; do
+  case "$major" in ""|*[!0-9]*) echo "Invalid Node version '$major'." >&2; fails=1; continue ;; esac
+  [ "v$major" != "${image%%.*}" ] || continue
+  old=$(fnm list | grep -o "v$major\.[0-9.]*" | sort -uV || true)
+  [ -z "$old" ] || [ "$update" = 1 ] || continue
+  fnm install "$major" || { echo "WARNING: cannot download Node $major." >&2; fails=1; continue; }
+  new=$(fnm list | grep -o "v$major\.[0-9.]*" | sort -uV | tail -n 1)
+  for version in $old; do
+    [ "$version" = "$new" ] || fnm uninstall "$version"
+  done
+done
+exit "$fails"

@@ -35,14 +35,14 @@ ok "instance runroot" "$RUNROOT" "/run/user/$(id -u)/orca-pods-client"
 case "$RUNROOT" in /run/user/*) r=ok ;; *) r=bad ;; esac; ok "runroot in /run/user" "$r" ok
 
 for name in 'Bad' 'a/b' '-x' 'a b' 'secrets' ''; do
-  ( ROLE=client; PODS_INSTANCE=$name; [ -n "$name" ] || PODS_INSTANCE=' '; . lib/common.sh ) >/dev/null 2>&1
+  ( ROLE=server; PODS_INSTANCE=$name; [ -n "$name" ] || PODS_INSTANCE=' '; . lib/common.sh ) >/dev/null 2>&1
   ok "instance '$name' rejected" $? 1
 done
-( ROLE=client; PODS_INSTANCE=main-2; . lib/common.sh; [ "$STORE" = "$tmp/store/main-2" ] )
+( ROLE=server; PODS_INSTANCE=main-2; . lib/common.sh; [ "$STORE" = "$tmp/store/main-2" ] )
 ok "instance main-2" $? 0
 
 printf 'PODS_INSTANCE=sample\n' >"$tmp/env"
-ok "config file" "$(ROLE=client; PODS_CONFIG=$tmp/env; . lib/common.sh; echo "$INSTANCE")" sample
+ok "config file" "$(ROLE=server; PODS_CONFIG=$tmp/env; . lib/common.sh; echo "$INSTANCE")" sample
 
 rules=$(firewall_rules)
 for want in 'iifname "br-orca" drop' 'tcp dport 443 accept' '192.168.0.0/16' 'meta nfproto ipv6 drop'; do
@@ -58,8 +58,29 @@ for f in dist/orca-*; do
   (cd "$tmp" && ./standalone packages >/dev/null); ok "$f runs standalone" $? 0
 done
 
+# Signed self-update: only a release with a valid signature replaces the script.
+mkdir -p "$tmp/rel" "$tmp/cfg"
+ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
+printf 'orca-pods %s\n' "$(cat "$tmp/key.pub")" >"$tmp/cfg/allowed_signers"
+cp dist/orca-server "$tmp/rel/orca-server"
+echo '# new' >>"$tmp/rel/orca-server"
+ssh-keygen -q -Y sign -f "$tmp/key" -n orca-pods "$tmp/rel/orca-server" </dev/null
+cp dist/orca-server "$tmp/deployed"
+su_update() { PODS_CONFIG="$tmp/cfg/server.env" PODS_RELEASE_DIR="$tmp/rel" PODS_STORE="$tmp/store" "$tmp/deployed" self-update >/dev/null 2>&1; }
+su_update; ok "valid signature" $? 0
+ok "script replaced" "$(tail -n 1 "$tmp/deployed")" '# new'
+cp dist/orca-server "$tmp/deployed"
+echo '# tampered' >>"$tmp/rel/orca-server"
+su_update; ok "tampered file rejected" $? 1
+ok "script unchanged" "$(cmp -s dist/orca-server "$tmp/deployed"; echo $?)" 0
+ssh-keygen -q -t ed25519 -N '' -f "$tmp/other"
+cp dist/orca-server "$tmp/rel/orca-server"
+rm -f "$tmp/rel/orca-server.sig"
+ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/orca-server" </dev/null
+su_update; ok "unknown key rejected" $? 1
+
 if command -v shellcheck >/dev/null; then
-  shellcheck -x -S warning -e SC1091,SC2034 orca-client.sh dev.sh build.sh test.sh lib/common.sh tests/*.sh
+  shellcheck -x -S warning -e SC1091,SC2034 orca-client.sh orca-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]*
   ok "shellcheck" $? 0
 else
   echo "SKIP  shellcheck not installed"

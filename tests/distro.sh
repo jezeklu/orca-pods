@@ -27,7 +27,7 @@ echo "+ $cmd"
 eval "${cmd#sudo } $yes" >/dev/null 2>&1
 useradd -m t
 grep -q "^t:" /etc/subuid 2>/dev/null || echo "t:100000:65536" >>/etc/subuid
-su - t -c "sh /t/orca-client doctor"
+su - t -c "sh /t/orca-server doctor; sh /t/orca-client doctor"
 '
 
 fails=0

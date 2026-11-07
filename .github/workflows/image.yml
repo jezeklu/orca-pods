@@ -6,6 +6,7 @@ on:
     paths:
       - Dockerfile
       - .dockerignore
+      - server/**
       - .github/workflows/image.yml
   schedule:
     - cron: "17 4 * * 1" # weekly, picks up Debian security updates
@@ -34,6 +35,16 @@ jobs:
           target: client
           tags: orca-pods:test
 
+      - name: Build server
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          pull: true
+          load: true
+          target: server
+          tags: orca-pods:server-test
+
       - name: Smoke test
         run: |
           docker run --rm orca-pods:test sh -ec '
@@ -42,6 +53,13 @@ jobs:
             tailscaled --version
             command -v iptables
             command -v ip
+          '
+          docker run --rm orca-pods:server-test sh -ec '
+            test "$(id -u dev)" = 30100
+            for tool in git gh mc htop curl jq rg gcc python3 uv fnm node pnpm claude codex opencode \
+              Xvfb tailscale orca-update orca-pair orca-node git-credential-pods; do
+              command -v "$tool"
+            done
           '
 
       - name: Date tag
@@ -64,3 +82,13 @@ jobs:
             ${{ env.IMAGE }}:latest
             ${{ env.IMAGE }}:${{ steps.date.outputs.tag }}
 
+      - name: Push server
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          target: server
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:server
+            ${{ env.IMAGE }}:server-${{ steps.date.outputs.tag }}

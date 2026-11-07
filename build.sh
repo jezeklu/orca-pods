@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds the standalone files dist/orca-client.
+# Builds the standalone files dist/orca-client and dist/orca-server.
 set -eu
 cd "$(dirname "$(readlink -f "$0")")"
 mkdir -p dist

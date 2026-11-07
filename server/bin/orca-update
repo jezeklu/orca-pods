@@ -1,0 +1,76 @@
+#!/bin/bash
+# Installs a verified Orca release into the home directory and switches to it.
+#   orca-update              latest version
+#   orca-update 1.4.251      a specific version, also the way back
+#   orca-update --no-restart install only, do not restart the server
+set -euo pipefail
+APP=$HOME/.local/share/orca-server
+REPO=https://github.com/stablyai/orca/releases
+restart=1
+want=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-restart) restart=0 ;;
+    [0-9]*) want=$arg ;;
+    *) echo "Usage: orca-update [version] [--no-restart]" >&2; exit 1 ;;
+  esac
+done
+
+if [ -n "$want" ]; then url=$REPO/download/v$want/latest-linux.yml; else url=$REPO/latest/download/latest-linux.yml; fi
+yml=$(curl -fsSL "$url")
+version=$(awk '/^version:/{print $2}' <<<"$yml")
+sum=$(awk '/^sha512:/{print $2}' <<<"$yml")
+[ -n "$version" ] && [ -n "$sum" ] || { echo "Cannot read the release description." >&2; exit 1; }
+
+mkdir -p "$APP"
+previous=$(readlink "$APP/current" 2>/dev/null || true)
+if [ "$previous" = "$version" ]; then
+  echo "Orca $version is already running."
+  exit 0
+fi
+
+if [ ! -x "$APP/$version/AppRun" ]; then
+  work=$(mktemp -d "$APP/.work.XXXXXX")
+  trap 'rm -rf "$work"' EXIT
+  curl -fL --retry 3 -o "$work/orca.AppImage" "$REPO/download/v$version/orca-linux.AppImage"
+  [ "$(openssl dgst -sha512 -binary "$work/orca.AppImage" | base64 -w0)" = "$sum" ] \
+    || { echo "SHA-512 mismatch, nothing changed." >&2; exit 1; }
+  chmod +x "$work/orca.AppImage"
+  (cd "$work" && ./orca.AppImage --appimage-extract >/dev/null)
+  mv "$work/squashfs-root" "$APP/$version"
+fi
+
+ln -sfn "$version" "$APP/.current"
+mv -T "$APP/.current" "$APP/current"
+
+# Repeats the restart: right after a start serve may not have reacted to the first one.
+ready() { # wanted version
+  for try in $(seq 60); do
+    [ "$(orca-ide status --json 2>/dev/null | jq -r '.result.runtime.appVersion + " " + .result.runtime.state')" = "$1 ready" ] && return 0
+    [ $((try % 15)) -ne 0 ] || orca-restart
+    sleep 2
+  done
+  return 1
+}
+
+if [ "$restart" = 1 ]; then
+  orca-restart
+  if ! ready "$version"; then
+    echo "Orca $version did not start." >&2
+    if [ -n "$previous" ]; then
+      echo "Rolling back to $previous." >&2
+      ln -sfn "$previous" "$APP/.current"
+      mv -T "$APP/.current" "$APP/current"
+      orca-restart
+      ready "$previous" || echo "$previous did not start either." >&2
+    fi
+    exit 1
+  fi
+fi
+
+# One older version stays for a way back.
+for dir in "$APP"/[0-9]*; do
+  name=${dir##*/}
+  [ "$name" = "$version" ] || [ "$name" = "$previous" ] || rm -rf "$dir"
+done
+echo "Orca $version installed."

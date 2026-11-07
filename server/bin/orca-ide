@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$HOME/.local/share/orca-server/current/resources/bin/orca-ide" "$@"

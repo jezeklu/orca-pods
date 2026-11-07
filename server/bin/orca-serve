@@ -1,0 +1,53 @@
+#!/bin/bash
+# Keeps Orca running as dev. Xvfb stays while serve is replaced, so an update does not touch it.
+set -u
+APP=$HOME/.local/share/orca-server
+RUN=/tmp/orca-serve
+mkdir -p "$RUN"
+chmod 700 "$RUN"
+Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp &
+export DISPLAY=:99
+
+serve() {
+  dbus-run-session -- "$APP/current/AppRun" --no-sandbox serve --port 6768 --pairing-address 127.0.0.1 "$@"
+}
+
+# A restart that hits serve while it starts leaves a child holding the profile lock.
+# The terminal daemon is a different process and stays.
+clear_previous() {
+  pgrep -x orca-ide >/dev/null || return 0
+  pkill -TERM -x orca-ide
+  for _ in $(seq 10); do
+    pgrep -x orca-ide >/dev/null || return 0
+    sleep 1
+  done
+  pkill -KILL -x orca-ide
+  pkill -TERM -f 'orcad-server\.js'
+  sleep 1
+}
+
+while :; do
+  clear_previous
+  if [ ! -x "$APP/current/AppRun" ]; then
+    sleep 5
+  elif [ -f "$RUN/pair" ]; then
+    # A supervised server hides the pairing code. A short run without supervision prints it,
+    # paired devices stay and terminals survive the restart.
+    read -r args <"$RUN/pair" || args=""
+    rm -f "$RUN/pair"
+    # shellcheck disable=SC2086 # empty or a single flag from orca-pair
+    serve --json $args >"$RUN/pair.part" 2>"$RUN/pair.err" &
+    pid=$!
+    for _ in $(seq 60); do
+      grep -q 'orca://' "$RUN/pair.part" && break
+      kill -0 "$pid" 2>/dev/null || break
+      sleep 1
+    done
+    mv "$RUN/pair.part" "$RUN/pair.json"
+    orca-restart
+    wait "$pid"
+  else
+    serve --supervise >>"$RUN/serve.log" 2>&1
+  fi
+  sleep 1
+done
