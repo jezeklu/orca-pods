@@ -3,6 +3,8 @@
 #   ./test.sh            unit tests, distributions in containers, isolation tests on this machine
 #   ./test.sh unit       unit tests only, also run in a container without Podman
 #   ./test.sh vm [distro…]  isolation tests in a VM, Fedora without an argument; needs QEMU
+#   ./test.sh server     server role on this machine: builds the image and runs isolation tests
+#   ./test.sh vm-server [distro…]  the same in a VM, including the server role; takes longer
 #   ./test.sh clean      remove test images and VMs, leave other images alone
 # Downloaded images stay for the next run. Fresh ones are pulled after ./test.sh clean.
 set -eu
@@ -10,7 +12,9 @@ cd "$(dirname "$(readlink -f "$0")")"
 case "${1:-}" in
   unit) tests/unit.sh ;;
   vm) shift; tests/vm.sh "$@" ;;
-  clean) tests/distro.sh clean; tests/vm.sh clean; ./dev.sh clean ;;
+  vm-server) shift; PODS_VM_SERVER=1 tests/vm.sh "$@" ;;
+  server) shift; tests/server.sh "$@" ;;
+  clean) tests/distro.sh clean; tests/vm.sh clean; ./dev.sh clean; tests/server.sh clean ;;
   "") tests/unit.sh; tests/distro.sh; ./dev.sh build; ./dev.sh test ;;
-  *) echo "Usage: $0 [unit|vm [distro…]|clean]" >&2; exit 1 ;;
+  *) echo "Usage: $0 [unit|vm [distro…]|vm-server [distro…]|server|clean]" >&2; exit 1 ;;
 esac

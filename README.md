@@ -238,10 +238,12 @@ Everything runs locally, GitHub Actions runs checks on pull requests and VM test
 ./test.sh              # unit tests, four distributions in containers, isolation tests on this machine
 ./test.sh unit         # unit tests only
 ./test.sh vm [distro]  # isolation tests in a VM: fedora (default), debian, ubuntu, archlinux
+./test.sh server       # server role: image, isolation tests, a real Orca in the container
+./test.sh vm-server [distro]  # the same in a VM, including the systemd unit
 ./test.sh clean        # remove test images and VMs, leave other images alone
 ```
 
-Downloaded images stay for the next run. VMs are deleted after the test, their base images stay in `.local/`.
+Downloaded images stay for the next run. The server role needs about 11 GB, `vm-server` up to 14 GB per running VM. VMs are deleted after the test, their base images stay in `.local/`.
 
 `./test.sh vm` needs only QEMU from the distribution packages and `/dev/kvm`, for example `sudo pacman -S qemu-base` on Arch.
 

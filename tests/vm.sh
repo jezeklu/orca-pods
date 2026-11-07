@@ -3,6 +3,7 @@
 # Needs only the QEMU package and /dev/kvm. Everything else stays in .local/vm, nothing is installed.
 #   tests/vm.sh [fedora|debian|ubuntu|archlinux…]   Fedora without an argument, Ubuntu is LTS 26.04
 #   tests/vm.sh clean                               remove VMs and downloaded images
+#   PODS_VM_SERVER=1 tests/vm.sh …                  also the server role and its systemd unit
 # The VM is deleted after the test, the downloaded image stays for the next run.
 set -eu
 cd "$(dirname "$(readlink -f "$0")")/.."
@@ -36,7 +37,7 @@ image_url() {
 inner='
 set -eux
 cd repo
-cmd=$(sh orca-client.sh packages)
+cmd=$(sh orca-server.sh packages)
 . /etc/os-release
 echo "$PRETTY_NAME, SELinux: $(getenforce 2>/dev/null || echo no)"
 case "$ID" in
@@ -51,8 +52,18 @@ grep -q "^$(id -un):" /etc/subuid ||
 sudo systemctl restart "user@$(id -u).service"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-./dev.sh build
-./dev.sh test
+if [ -n "${PODS_VM_SERVER:-}" ]; then
+  df -h / | tail -n 1
+  sh tests/vm-server.sh || {
+    df -h / | tail -n 1
+    sudo dmesg | grep -i "apparmor.*denied" | tail -n 12 || true
+    sudo aa-status 2>/dev/null | grep -E "pasta|passt|podman|crun|runc" || true
+    exit 1
+  }
+else
+  ./dev.sh build
+  ./dev.sh test
+fi
 '
 
 vm_ssh() {
@@ -116,7 +127,7 @@ CFG
   git ls-files -z --cached --others --exclude-standard \
     | tar c --null -T - \
     | vm_ssh 'mkdir -p repo && tar x -C repo'
-  printf '%s' "$inner" | vm_ssh bash -s
+  { [ -z "${PODS_VM_SERVER:-}" ] || echo "export PODS_VM_SERVER=1"; printf '%s' "$inner"; } | vm_ssh bash -s
 }
 
 fails=0
