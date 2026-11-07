@@ -1,0 +1,23 @@
+name: checks
+
+# Pull requests only, day-to-day testing runs locally with ./test.sh.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/unit.sh
+
+  distro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/distro.sh
+        env:
+          PODS_CT: docker

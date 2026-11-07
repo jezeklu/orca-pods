@@ -88,6 +88,21 @@ Paste `acl.hujson` into the Tailscale admin console before the first login. It r
 ./dev.sh
 ```
 
+## Tests
+
+Everything runs locally, GitHub Actions runs checks on pull requests and VM tests on demand.
+
+```sh
+./test.sh              # unit tests, four distributions in containers, isolation tests on this machine
+./test.sh unit         # unit tests only
+./test.sh vm [distro]  # isolation tests in a VM: fedora (default), debian, ubuntu, archlinux
+./test.sh clean        # remove test images and VMs, leave other images alone
+```
+
+Downloaded images stay for the next run. VMs are deleted after the test, their base images stay in `.local/`.
+
+`./test.sh vm` needs only QEMU from the distribution packages and `/dev/kvm`, for example `sudo pacman -S qemu-base` on Arch.
+
 ## CI/CD
 
 `.github/workflows/image.yml` builds the image, smoke-tests it and publishes it to Docker Hub with the tags `latest` and a date. Set these repository secrets:
