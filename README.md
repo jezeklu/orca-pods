@@ -258,6 +258,10 @@ Downloaded images stay for the next run. The server role needs about 11 GB, `vm-
 
 Forks publish elsewhere by changing `IMAGE` in the workflow and setting `PODS_IMAGE` on the host.
 
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the commit format and tests, and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+
 ## License
 
 [MIT](LICENSE)
