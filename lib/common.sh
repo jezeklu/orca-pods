@@ -119,13 +119,13 @@ remove_containers() { # seconds names...
 # Offline start keeps working with the last image. The store is private, so pruning cannot touch other images.
 update_image() {
   [ "$PULL" = 1 ] || return 0
-  if pod pull -q "$IMAGE" >/dev/null 2>&1; then
+  if err=$(pod pull -q "$IMAGE" 2>&1 >/dev/null); then
     pod tag "$IMAGE" orca-pods
     pod image prune -f >/dev/null
   elif pod image exists orca-pods; then
-    echo "WARNING: could not pull a new image, using the last one." >&2
+    echo "WARNING: could not pull a new image, using the last one: ${err##*Error: }" >&2
   else
-    echo "Cannot pull $IMAGE and no local image exists." >&2
+    echo "Cannot pull $IMAGE and no local image exists: ${err##*Error: }" >&2
     exit 1
   fi
 }
