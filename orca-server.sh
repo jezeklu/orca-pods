@@ -200,6 +200,8 @@ update_all() {
   if running; then
     # shellcheck disable=SC2086 # list of majors
     pod exec --user dev orca-server orca-node --update $NODE_VERSIONS
+    # shellcheck disable=SC2086 # list of tools
+    [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools --update $TOOLS
   fi
 }
 

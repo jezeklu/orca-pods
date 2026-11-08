@@ -178,7 +178,7 @@ Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later chang
 | Variable | Default | Meaning |
 |---|---|---|
 | `PODS_SECRETS_DIR` | `~/.local/share/orca-pods/secrets` | The only host folder you choose for the container, mounted read-only at `/secrets`. It holds the [GitHub tokens](#git-and-github). It must be an absolute path on a local file system with ACL support, not your home directory or above it, not inside `.ssh`, without `:` or `,`. `install` creates it and grants the container user read access. |
-| `PODS_TOOLS` | empty | Optional tools installed into the container home at start, space-separated. Off by default. Supported: `agy` (Antigravity CLI), installed with Google's official installer, see [Coding agents](#coding-agents). |
+| `PODS_TOOLS` | empty | Optional tools installed into the container home at start, space-separated. Off by default. Supported: `agy` (Antigravity CLI) and `openspec` (OpenSpec CLI), see [Coding agents](#coding-agents). |
 | `PODS_NODE_VERSIONS` | empty | Extra Node major versions next to the image one, for example `24`. |
 | `PODS_PORT` | `6769` | Port on `127.0.0.1` for a local Orca. |
 | `PODS_MEMORY` | `10g` | Memory limit of the container. |
@@ -255,6 +255,8 @@ Each agent logs in separately inside the container:
 | Antigravity CLI (`agy`) | `/home/dev/.gemini` |
 
 Claude Code, Codex and OpenCode come with the image. `agy` is not on npm and updates itself, so it is optional: set `PODS_TOOLS="agy"` and it is installed at the next start into `/home/dev/.local/bin/agy`, inside the container only. The installer comes from Google and checks a SHA-512 from the same server, which guards against broken downloads, not against a compromised source.
+
+`PODS_TOOLS="openspec"` installs the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI from npm into `/home/dev/.local`, `orca-server update` updates it. Its skills and commands belong to the project: `openspec init` writes them into the repository, so they arrive with the clone.
 
 ### Git and GitHub
 

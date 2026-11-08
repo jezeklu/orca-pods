@@ -1,11 +1,19 @@
 #!/bin/bash
-# Optional tools picked by PODS_TOOLS on the host. They update themselves, so they live in the
-# home directory, not in the image, and survive a new image.
-#   orca-tools agy
+# Optional tools picked by PODS_TOOLS on the host. They live in the home directory, not in the image,
+# so they survive a new image.
+#   orca-tools agy openspec            install what is missing
+#   orca-tools --update agy openspec   also update tools that do not update themselves
 set -eu
+update=""
+if [ "${1:-}" = --update ]; then update=1; shift; fi
 for tool in "$@"; do
   case "$tool" in
+    # Updates itself.
     agy) command -v agy >/dev/null || curl -fsSL https://antigravity.google/cli/install.sh | bash ;;
-    *) echo "Unknown tool '$tool', supported: agy." >&2; exit 1 ;;
+    openspec)
+      if [ -n "$update" ] || ! command -v openspec >/dev/null; then
+        npm install -g --prefix "$HOME/.local" --no-fund --no-audit --update-notifier=false @fission-ai/openspec@latest >/dev/null
+      fi ;;
+    *) echo "Unknown tool '$tool', supported: agy, openspec." >&2; exit 1 ;;
   esac
 done
