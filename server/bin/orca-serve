@@ -26,8 +26,20 @@ clear_previous() {
   sleep 1
 }
 
+# Revoking a device edits the list only while Orca is stopped, see orca-devices.
+unpair() {
+  [ -f "$RUN/unpair" ] || return 0
+  read -r id <"$RUN/unpair" || id=""
+  file=$HOME/.config/orca/orca-devices.json
+  if [ -n "$id" ] && [ -f "$file" ]; then
+    jq --arg id "$id" 'map(select(.deviceId != $id))' "$file" >"$file.new" && mv "$file.new" "$file"
+  fi
+  rm -f "$RUN/unpair"
+}
+
 while :; do
   clear_previous
+  unpair
   if [ ! -x "$APP/current/AppRun" ]; then
     sleep 5
   elif [ -f "$RUN/pair" ]; then

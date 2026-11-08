@@ -160,6 +160,8 @@ orca-server pair       # pairing codes for 127.0.0.1 and for the tailnet
 
 A local Orca on the same host pairs with the `127.0.0.1` code. Orca warns that the link points back to this device; turn on its option for an SSH tunnel, because the port is forwarded into the container in the same way. Remote clients and phones use the tailnet code.
 
+`orca-server status` lists the paired devices with their id, `orca-server unpair <id>` revokes one. Its pairing code stops working, open terminals in the container keep running.
+
 `orca-server` without arguments lists all commands, `orca-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
 
 ### Configuration

@@ -5,9 +5,10 @@
 #   orca-server install           set everything up and start the server at boot
 #   orca-server uninstall         remove the service, keep the data
 #   orca-server start | stop      start or stop the server
-#   orca-server status            server status
 #   orca-server login             log the server in to Tailscale
+#   orca-server status            server status and paired devices
 #   orca-server pair [--mobile]   print pairing codes
+#   orca-server unpair <id>       revoke a paired device, its id is in status
 #   orca-server update            pull a new image and Node patch releases
 #   orca-server self-update       replace this script, only with a validly signed release
 #   orca-server test [URL]        isolation tests, without data and only while the server is stopped
@@ -162,6 +163,18 @@ show_status() {
   echo "Tailscale: $(tailscale_state || true)"
   pod exec --user dev orca-server sh -c 'orca-ide status --json 2>/dev/null' \
     | sed -n 's/.*"appVersion": *"\([^"]*\)".*/Orca: \1/p'
+  echo "Paired devices:"
+  if devices=$(pod exec --user dev orca-server orca-devices 2>/dev/null); then
+    printf '%s\n' "$devices" | sed 's/^/  /'
+  else
+    echo "  unknown, the image is older than this script"
+  fi
+}
+
+unpair() {
+  require_running
+  [ -n "${1:-}" ] || { echo "Usage: $prog unpair <device id from $prog status>" >&2; exit 1; }
+  pod exec --user dev orca-server orca-devices remove "$1"
 }
 
 tailscale_login() {
@@ -384,10 +397,11 @@ main() {
     status) show_status ;;
     login) tailscale_login ;;
     pair) shift; pairing "$@" ;;
+    unpair) shift; unpair "$@" ;;
     update) update_all ;;
     self-update) self_update ;;
     test) shift; run_tests "$@" ;;
-    *) echo "Usage: $prog [install|uninstall|start|stop|status|login|pair|update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [install|uninstall|start|stop|status|login|pair|unpair|update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 

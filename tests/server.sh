@@ -33,7 +33,7 @@ if [ "${1:-}" != e2e ]; then
 pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   test "$(id -u dev)" = 30100
   for tool in git gh mc htop curl jq rg gcc make python3 uv fnm node npm pnpm claude codex opencode \
-    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-node git-credential-pods; do
+    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-node git-credential-pods; do
     command -v "$tool" >/dev/null || { echo "FAIL  missing $tool"; exit 1; }
   done
   node --version; pnpm --version; uv --version; fnm --version
@@ -63,6 +63,17 @@ echo "OK    rewritten pairing code works"
 bad=$(printf '%s' "${code#*=}" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -c '.deviceToken = "AAAA"' | base64 -w0 | tr '/+' '_-' | tr -d '=')
 if ORCA_PAIRING_CODE="${code%%=*}=$bad" orca-ide status --json 2>/dev/null | jq -e .ok >/dev/null; then echo "FAIL  forged token accepted"; exit 1; fi
 echo "OK    forged token rejected"
+# Revoking the newest device ends that code, the list shows it before and not after.
+id=$(jq -r 'max_by(.pairedAt) | .deviceId' ~/.config/orca/orca-devices.json)
+orca-devices | grep -q "^${id:0:8} " || { echo "FAIL  device not listed"; exit 1; }
+echo "OK    paired device listed"
+orca-devices remove "${id:0:8}" >/dev/null || { echo "FAIL  remove"; exit 1; }
+for _ in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q '"state": "ready"' && break; sleep 2; done
+if orca-devices | grep -q "^${id:0:8} "; then echo "FAIL  device still listed"; exit 1; fi
+if ORCA_PAIRING_CODE=$code orca-ide status --json 2>/dev/null | jq -e .ok >/dev/null; then echo "FAIL  revoked code still works"; exit 1; fi
+echo "OK    revoked device rejected"
+orca-devices remove "zzzz" >/dev/null 2>&1 && { echo "FAIL  invalid id accepted"; exit 1; }
+echo "OK    invalid device id rejected"
 SH
 ./orca-server.sh status
 
