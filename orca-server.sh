@@ -178,6 +178,7 @@ pairing() {
   set -- "ws://127.0.0.1:$PORT"
   [ -z "$ip" ] || set -- "$@" "ws://$ip:6768"
   pod exec --user dev orca-server orca-pair $mobile "$@"
+  echo "Local Orca warns that the 127.0.0.1 link points back to this device. Turn on its SSH tunnel option: the port is forwarded into the container." >&2
 }
 
 update_all() {
