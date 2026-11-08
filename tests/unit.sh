@@ -51,6 +51,25 @@ done
 ( PODS_SOURCED=1 PODS_TOOLS='agy other-tool' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
 ok "PODS_TOOLS list accepted" $? 0
 
+# A rejected saved login falls back to an anonymous pull, other errors do not.
+pull_log=$tmp/pull.log
+pod() {
+  echo "$*" >>"$pull_log"
+  case "$*" in
+    "pull -q --authfile "*) [ -z "${PULL_ANON_FAILS:-}" ] || { echo "Error: denied" >&2; return 1; } ;;
+    "pull -q "*) echo "Error: $PULL_ERROR" >&2; return 1 ;;
+  esac
+}
+: >"$pull_log"; PULL_ERROR="unauthorized: incorrect username or password"
+( PULL=1; update_image ) 2>/dev/null
+ok "rejected login retried anonymously" "$(grep -c -- '--authfile' "$pull_log")" 1
+: >"$pull_log"; PULL_ERROR="connection refused"
+( PULL=1; update_image ) >/dev/null 2>&1
+ok "network error not retried" "$(grep -c -- '--authfile' "$pull_log")" 0
+unset -f pod
+. lib/common.sh
+set +e
+
 rules=$(firewall_rules)
 for want in 'iifname "br-orca" drop' 'tcp dport 443 accept' '192.168.0.0/16' 'meta nfproto ipv6 drop'; do
   case "$rules" in *"$want"*) r=ok ;; *) r=bad ;; esac; ok "firewall: $want" "$r" ok

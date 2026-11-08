@@ -116,10 +116,28 @@ remove_containers() { # seconds names...
   pod rm -f -t 0 "$@" >/dev/null 2>&1
 }
 
+pull_image() {
+  err=$(pod pull -q "$IMAGE" 2>&1 >/dev/null) && return 0
+  case "$err" in
+    *unauthorized*|*"authentication required"*) ;;
+    *) return 1 ;;
+  esac
+  # A stale saved registry login breaks even a public image, so retry without any login.
+  anon=$(mktemp)
+  echo '{}' >"$anon"
+  if err=$(pod pull -q --authfile "$anon" "$IMAGE" 2>&1 >/dev/null); then
+    echo "WARNING: the saved login for the registry was rejected, pulled without it. Renew or remove that login." >&2
+    rm -f "$anon"
+    return 0
+  fi
+  rm -f "$anon"
+  return 1
+}
+
 # Offline start keeps working with the last image. The store is private, so pruning cannot touch other images.
 update_image() {
   [ "$PULL" = 1 ] || return 0
-  if err=$(pod pull -q "$IMAGE" 2>&1 >/dev/null); then
+  if pull_image; then
     pod tag "$IMAGE" orca-pods
     pod image prune -f >/dev/null
   elif pod image exists orca-pods; then
