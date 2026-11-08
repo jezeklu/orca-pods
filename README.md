@@ -39,7 +39,7 @@ Rootless network namespace + firewall ── orca-server container
 - [Requirements](#requirements)
 - [Client](#client): [first run](#first-run), [daily use](#daily-use), [security boundary](#client-security-boundary)
 - [Tailscale policy](#tailscale-policy)
-- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
+- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [projects](#projects), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
 - [Development](#development), [Tests](#tests), [CI/CD](#cicd)
 - [Contributing and security](#contributing-and-security), [License](#license)
 
@@ -222,6 +222,26 @@ Nothing goes into `/usr` or `/etc`.
 | `/etc/orca-pods/host.gitconfig` | `~/.gitconfig` | Read-only |
 
 Symlinks in `~/.claude/skills` must be relative (`../../.agents/skills/…`) to resolve in the container.
+
+### Projects
+
+Projects live only in the container, in `/home/dev/projects`. The desktop app clones only to the local machine, but the Orca CLI on the host clones straight onto the server. First find the id of the paired server:
+
+```bash
+orca environment list
+# f194d602-…  orca-pods-server on myhost  ws://127.0.0.1:6769
+```
+
+Then clone with that id as `runtime:<id>`. The clone runs in the container with its git and token, and the project shows up under the server in Orca:
+
+```bash
+orca project setup-clone --project github:<owner>/<repo> \
+  --host runtime:<environment id> \
+  --url https://github.com/<owner>/<repo>.git \
+  --destination /home/dev/projects
+```
+
+`orca host list` shows every target Orca can clone to, including the server. Use HTTPS URLs, SSH remotes are rewritten to HTTPS in the container anyway. Install dependencies from a terminal of that project in Orca, which runs in the container.
 
 ### Coding agents
 
