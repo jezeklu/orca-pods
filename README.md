@@ -1,5 +1,14 @@
 # orca-pods
 
+[![image](https://github.com/jezeklu/orca-pods/actions/workflows/image.yml/badge.svg)](https://github.com/jezeklu/orca-pods/actions/workflows/image.yml)
+[![client image](https://img.shields.io/docker/image-size/jezeklu/orca-pods/latest?label=client%20image)](https://hub.docker.com/r/jezeklu/orca-pods/tags?name=latest)
+[![server image](https://img.shields.io/docker/image-size/jezeklu/orca-pods/server?label=server%20image)](https://hub.docker.com/r/jezeklu/orca-pods/tags?name=server)
+[![Podman](https://img.shields.io/badge/podman-rootless%2C%205.0%2B-892CA0?logo=podman&logoColor=white)](https://podman.io)
+[![Tailscale](https://img.shields.io/badge/network-Tailscale-242424?logo=tailscale&logoColor=white)](https://tailscale.com)
+[![Linux](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](#requirements)
+[![release](https://img.shields.io/github/v/release/jezeklu/orca-pods?label=release)](https://github.com/jezeklu/orca-pods/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 Isolated Orca ADE pods: GUI client and headless server in hardened containers, connected over Tailscale.
 
 Two roles, one standalone script each:
@@ -24,6 +33,43 @@ Rootless network namespace + firewall ── orca-server container
                                            └── outbound TCP 443 and UDP only, no LAN, no host
 ```
 
+## Contents
+
+- [Quick start](#quick-start)
+- [Requirements](#requirements)
+- [Client](#client): [first run](#first-run), [daily use](#daily-use), [security boundary](#client-security-boundary)
+- [Tailscale policy](#tailscale-policy)
+- [Server](#server): [install](#what-install-touches), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
+- [Development](#development), [Tests](#tests), [CI/CD](#cicd)
+- [Contributing and security](#contributing-and-security), [License](#license)
+
+## Quick start
+
+Apply the [Tailscale policy](#tailscale-policy) first, then pick a role. `packages` prints the install command for your distribution, `doctor` checks the host.
+
+Server, on the machine that keeps your projects:
+
+```bash
+curl -fsSL -o ~/.local/bin/orca-server https://github.com/jezeklu/orca-pods/releases/latest/download/orca-server
+chmod +x ~/.local/bin/orca-server
+orca-server packages    # install what it prints, then
+orca-server doctor
+orca-server install     # image, Orca, start at boot
+orca-server login       # Tailscale
+orca-server pair        # pairing codes for the client
+```
+
+Client, on a desktop with Wayland and the Orca AppImage:
+
+```bash
+curl -fsSL -o ~/.local/bin/orca-client https://github.com/jezeklu/orca-pods/releases/latest/download/orca-client
+chmod +x ~/.local/bin/orca-client
+orca-client packages   # install what it prints, then
+orca-client doctor
+```
+
+Then set `PODS_APPIMAGE` and `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `orca-client`.
+
 ## Requirements
 
 Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podman 5.0 or newer. The client also needs Wayland and Orca as an AppImage. Ubuntu 24.04 ships Podman 4.9 and is not supported.
@@ -34,7 +80,7 @@ Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podma
 
 ### First run
 
-`./build.sh` builds the standalone files `dist/orca-client` and `dist/orca-server`. Copy the one you need into `~/.local/bin`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
+Download `orca-client` from the [latest release](https://github.com/jezeklu/orca-pods/releases/latest) into `~/.local/bin`, or build it from a checkout: `./build.sh` writes the standalone files `dist/orca-client` and `dist/orca-server`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
 
 Create the vault once. Store the password and the master key safely, without them the data is lost. `PODS_VAULT_BASE` is the directory from `client.env`.
 
@@ -208,7 +254,7 @@ The image ships the current Node release. Extra major versions go into `PODS_NOD
 
 ### Release signing
 
-On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload both files from `dist/` to the release. The public key goes into `~/.config/orca-pods/allowed_signers` as `orca-pods ssh-ed25519 …`. The container never sees this file, so code written in the container cannot reach the host unsigned.
+On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/orca-server`, `dist/orca-server.sig` and `dist/orca-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers` as `orca-pods ssh-ed25519 …`. The container never sees this file, so code written in the container cannot reach the host unsigned.
 
 ### Server security boundary
 
