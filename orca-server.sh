@@ -25,6 +25,10 @@ PORT="${PODS_PORT:-6769}"
 DEFAULT_SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/orca-pods/secrets"
 SECRETS="${PODS_SECRETS_DIR:-}"
 NODE_VERSIONS="${PODS_NODE_VERSIONS:-}"
+TOOLS="${PODS_TOOLS:-}"
+case "$TOOLS" in
+  *[!a-z0-9\ -]*) echo "PODS_TOOLS is a space-separated list of tool names." >&2; exit 1 ;;
+esac
 MEMORY="${PODS_MEMORY:-10g}"
 HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
@@ -142,6 +146,8 @@ start_server() {
   # Offline start must not fail on this, Node for projects is not needed to reach the server.
   # shellcheck disable=SC2086 # list of majors
   pod exec --user dev orca-server orca-node $NODE_VERSIONS || echo "WARNING: could not install the extra Node versions." >&2
+  # shellcheck disable=SC2086 # list of tools
+  [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
   echo "Server running on 127.0.0.1:$PORT."
 }
 
@@ -245,7 +251,6 @@ install_server() {
   [ -d "$SECRETS" ] || { mkdir -p "$SECRETS"; chmod 700 "$SECRETS"; }
   start_server
   pod exec --user dev orca-server orca-update --no-restart
-  pod exec --user dev orca-server orca-tools || echo "WARNING: agy did not install, run orca-tools in the container." >&2
   write_unit
   systemctl --user daemon-reload
   systemctl --user enable "orca-$INSTANCE.service"

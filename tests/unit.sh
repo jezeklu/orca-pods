@@ -44,6 +44,13 @@ ok "instance main-2" $? 0
 printf 'PODS_INSTANCE=sample\n' >"$tmp/env"
 ok "config file" "$(ROLE=server; PODS_CONFIG=$tmp/env; . lib/common.sh; echo "$INSTANCE")" sample
 
+for tools in 'agy;id' 'agy $(id)' 'AGY'; do
+  ( PODS_SOURCED=1 PODS_TOOLS=$tools sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+  ok "PODS_TOOLS '$tools' rejected" $? 1
+done
+( PODS_SOURCED=1 PODS_TOOLS='agy other-tool' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+ok "PODS_TOOLS list accepted" $? 0
+
 rules=$(firewall_rules)
 for want in 'iifname "br-orca" drop' 'tcp dport 443 accept' '192.168.0.0/16' 'meta nfproto ipv6 drop'; do
   case "$rules" in *"$want"*) r=ok ;; *) r=bad ;; esac; ok "firewall: $want" "$r" ok

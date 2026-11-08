@@ -39,7 +39,7 @@ Rootless network namespace + firewall ── orca-server container
 - [Requirements](#requirements)
 - [Client](#client): [first run](#first-run), [daily use](#daily-use), [security boundary](#client-security-boundary)
 - [Tailscale policy](#tailscale-policy)
-- [Server](#server): [install](#what-install-touches), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
+- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
 - [Development](#development), [Tests](#tests), [CI/CD](#cicd)
 - [Contributing and security](#contributing-and-security), [License](#license)
 
@@ -47,13 +47,17 @@ Rootless network namespace + firewall ── orca-server container
 
 Apply the [Tailscale policy](#tailscale-policy) first, then pick a role. `packages` prints the install command for your distribution, `doctor` checks the host.
 
-Server, on the machine that keeps your projects:
+Server, on the machine that keeps your projects. Settings must be in place **before** `orca-server install`: the defaults work without a settings file, anything else such as your own secrets folder or optional tools goes into `~/.config/orca-pods/server.env` first, see [Configuration](#configuration).
 
 ```bash
 curl -fsSL -o ~/.local/bin/orca-server https://github.com/jezeklu/orca-pods/releases/latest/download/orca-server
 chmod +x ~/.local/bin/orca-server
 orca-server packages    # install what it prints, then
 orca-server doctor
+# optional, before install: settings, see Configuration
+#   mkdir -p ~/.config/orca-pods
+#   curl -fsSL -o ~/.config/orca-pods/server.env https://raw.githubusercontent.com/jezeklu/orca-pods/main/server.env.example
+#   then edit PODS_SECRETS_DIR, PODS_TOOLS, …
 orca-server install     # image, Orca, start at boot
 orca-server login       # Tailscale
 orca-server pair        # pairing codes for the client
@@ -149,14 +153,43 @@ The host needs rootless Podman, `nft`, `acl` and `pasta`, `orca-server packages`
 ```bash
 curl -fsSL -o ~/.local/bin/orca-server https://github.com/jezeklu/orca-pods/releases/latest/download/orca-server
 chmod +x ~/.local/bin/orca-server
-orca-server install    # image, Orca, agy, start at boot, no root
+orca-server install    # image, Orca, start at boot, no root
 orca-server login      # Tailscale with tag:orca-server
 orca-server pair       # pairing codes for 127.0.0.1 and for the tailnet
 ```
 
-Settings live in `~/.config/orca-pods/server.env`, see `server.env.example`. `orca-server` without arguments lists all commands, `orca-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
+`orca-server` without arguments lists all commands, `orca-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
 
-`PODS_INSTANCE` selects an instance. Each one has its own store, network namespace, firewall and systemd unit, so several servers can run side by side.
+### Configuration
+
+Settings live in `~/.config/orca-pods/server.env`. To change any default, create the file **before** `install`:
+
+```bash
+mkdir -p ~/.config/orca-pods
+curl -fsSL -o ~/.config/orca-pods/server.env https://raw.githubusercontent.com/jezeklu/orca-pods/main/server.env.example
+```
+
+Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later changes apply at the next start: `orca-server stop && orca-server start`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PODS_SECRETS_DIR` | `~/.local/share/orca-pods/secrets` | The only host folder you choose for the container, mounted read-only at `/secrets`. It holds the [GitHub tokens](#git-and-github). It must be an absolute path on a local file system with ACL support, not your home directory or above it, not inside `.ssh`, without `:` or `,`. `install` creates it and grants the container user read access. |
+| `PODS_TOOLS` | empty | Optional tools installed into the container home at start, space-separated. Off by default. Supported: `agy` (Antigravity CLI), installed with Google's official installer, see [Coding agents](#coding-agents). |
+| `PODS_NODE_VERSIONS` | empty | Extra Node major versions next to the image one, for example `24`. |
+| `PODS_PORT` | `6769` | Port on `127.0.0.1` for a local Orca. |
+| `PODS_MEMORY` | `10g` | Memory limit of the container. |
+| `PODS_IMAGE` | `docker.io/jezeklu/orca-pods:server` | Image to run, for forks. |
+| `PODS_PULL` | `1` | `0` starts with the local image without pulling a new one. |
+| `PODS_STORE` | `~/.local/share/orca-pods` | Where instance data lives, one subfolder per instance. |
+
+Besides `PODS_SECRETS_DIR`, the container gets only these fixed host paths, read-only and only when they exist: `~/.agents/skills`, `~/.claude/skills` and `~/.gitconfig`. See [Paths in the container](#paths-in-the-container).
+
+**Several instances.** Each instance has its own store, network namespace, firewall and systemd unit. A second one needs its own settings file with `PODS_INSTANCE` and a different `PODS_PORT`, passed through `PODS_CONFIG`:
+
+```bash
+printf 'PODS_INSTANCE=work\nPODS_PORT=6770\nPODS_SECRETS_DIR="%s"\n' "$HOME/.local/share/orca-pods/secrets-work" >~/.config/orca-pods/work.env
+PODS_CONFIG=~/.config/orca-pods/work.env orca-server install
+```
 
 ### What `install` touches
 
@@ -196,6 +229,8 @@ Each agent logs in separately inside the container:
 | Codex | `/home/dev/.codex` |
 | OpenCode | `/home/dev/.config/opencode`, `/home/dev/.local/share/opencode` |
 | Antigravity CLI (`agy`) | `/home/dev/.gemini` |
+
+Claude Code, Codex and OpenCode come with the image. `agy` is not on npm and updates itself, so it is optional: set `PODS_TOOLS="agy"` and it is installed at the next start into `/home/dev/.local/bin/agy`, inside the container only. The installer comes from Google and checks a SHA-512 from the same server, which guards against broken downloads, not against a compromised source.
 
 ### Git and GitHub
 
