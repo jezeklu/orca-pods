@@ -69,6 +69,8 @@ sed 's#/usr/bin/gh#/tmp/fake-gh#' "$(command -v gh)" >/tmp/gh-test
 [ "$(bash /tmp/gh-test pr list --repo example-user/x)" = token-user ] || fail "gh by --repo"
 [ "$(bash /tmp/gh-test pr list -R example-user/x)" = token-user ] || fail "gh by -R"
 [ "$(bash /tmp/gh-test pr list -R someone-else/x)" = token-default ] || fail "gh unknown owner"
+[ "$(bash /tmp/gh-test repo view example-user/x)" = token-user ] || fail "gh repo view owner/name"
+[ "$(bash /tmp/gh-test repo clone https://github.com/Example-User/x.git)" = token-user ] || fail "gh repo clone URL"
 cd /tmp
 [ "$(bash /tmp/gh-test pr list)" = token-default ] || fail "gh default"
 pass "gh picks the token"

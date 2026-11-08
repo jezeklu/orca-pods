@@ -1,5 +1,6 @@
 #!/bin/bash
-# Picks the token by the repository in use: --repo first, then origin, then default.token.
+# Picks the token by the repository in use: --repo first, then the repository of gh repo <command>,
+# then origin, then default.token.
 owner=""
 prev=""
 for arg in "$@"; do
@@ -7,6 +8,9 @@ for arg in "$@"; do
   case "$arg" in --repo=*) owner=${arg#--repo=}; owner=${owner%%/*} ;; esac
   prev=$arg
 done
+if [ -z "$owner" ] && [ "${1:-}" = repo ] && [[ "${3:-}" =~ ^(https://github\.com/)?([A-Za-z0-9-]+)/[A-Za-z0-9._-]+ ]]; then
+  owner=${BASH_REMATCH[2]}
+fi
 if [ -z "$owner" ]; then
   url=$(git remote get-url origin 2>/dev/null || true)
   if [[ "$url" =~ github\.com[:/]([^/]+)/ ]]; then owner=${BASH_REMATCH[1]}; fi
