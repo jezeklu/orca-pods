@@ -45,6 +45,7 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo 'eval "$(fnm env --use-on-cd --version-file-strategy=recursive --shell bash)"' >> /etc/bash.bashrc
 COPY server/bin/ /usr/local/bin/
 COPY server/gitconfig /etc/gitconfig
+COPY server/profile.sh /etc/profile.d/orca-pods.sh
 ENV PATH=/home/dev/.local/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV FNM_DIR=/home/dev/.local/share/fnm
 ENV PNPM_HOME=/home/dev/.local/share/pnpm

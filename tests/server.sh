@@ -37,6 +37,7 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
     command -v "$tool" >/dev/null || { echo "FAIL  missing $tool"; exit 1; }
   done
   node --version; pnpm --version; uv --version; fnm --version
+  su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*:/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
 ./orca-server.sh test
 fi
