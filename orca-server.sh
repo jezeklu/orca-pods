@@ -101,9 +101,6 @@ run_container() { # options for mounts
 }
 
 host_mounts() {
-  for pair in "$HOME/.agents/skills:/home/dev/.agents/skills" "$HOME/.claude/skills:/home/dev/.claude/skills"; do
-    [ ! -d "${pair%%:*}" ] || printf '%s\n' "-v" "$pair:ro,nosuid,nodev"
-  done
   [ ! -f "$HOME/.gitconfig" ] || printf '%s\n' "-v" "$HOME/.gitconfig:/etc/orca-pods/host.gitconfig:ro,noexec,nosuid,nodev"
 }
 
@@ -157,6 +154,8 @@ start_server() {
   [ -z "$RUNTIMES" ] || echo "Installing $RUNTIMES if missing..."
   # shellcheck disable=SC2086 # list of runtimes
   pod exec --user dev orca-server orca-runtimes $RUNTIMES || echo "WARNING: could not install PODS_RUNTIMES ($RUNTIMES)." >&2
+  # Also on servers set up before the skills came from the server itself.
+  pod exec --user dev orca-server orca-skills || true
   [ -z "$TOOLS" ] || echo "Installing $TOOLS if missing..."
   # shellcheck disable=SC2086 # list of tools
   [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
@@ -346,15 +345,12 @@ run_tests() {
   work=$STORE/test
   # A killed run leaves files owned by mapped users behind.
   pod unshare rm -rf "$work"
-  mkdir -p "$work/secrets/github" "$work/agents/sample" "$work/skills"
-  echo sample >"$work/agents/sample/SKILL.md"
-  ln -s ../../.agents/skills/sample "$work/skills/sample"
+  mkdir -p "$work/secrets/github"
   cp /bin/true "$work/secrets/program"
   echo secret >"$work/secrets/github/test.token"
   SECRETS=$work/secrets
   grant_secrets
   prepare_dirs "$work/home" "$work/state"
-  chmod -R o+rX "$work/skills" "$work/agents"
   srv=$(mktemp -d); python3 -m http.server --directory "$srv" 18767 >/dev/null 2>&1 & srvpid=$!
   trap 'set +e; kill "$srvpid" 2>/dev/null; rm -rf "$srv"; teardown; pod unshare rm -rf "$work"' EXIT
   sleep 1
@@ -362,11 +358,10 @@ run_tests() {
   net_up
   if echo 'table inet orca_pods { broken' | load_fw 2>/dev/null; then report 1 "broken firewall accepted"; else report 0 "broken firewall rejected, the server would not start"; fi
   firewall_rules | load_fw
+  # shellcheck disable=SC2046 # one option per line, as at start
   run_container --mount "type=bind,src=$work/home,dst=/home/dev" \
     --mount "type=bind,src=$work/state,dst=/state" \
-    -v "$work/secrets:/secrets:ro,noexec,nosuid,nodev" \
-    -v "$work/agents:/home/dev/.agents/skills:ro,nosuid,nodev" \
-    -v "$work/skills:/home/dev/.claude/skills:ro,nosuid,nodev"
+    -v "$work/secrets:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   pod exec -d --user dev orca-server python3 -m http.server 6768 --directory /tmp >/dev/null
   sleep 3
 
@@ -390,10 +385,9 @@ run_tests() {
   inside "tailscale0 exists" 'ip -br link | grep -q tailscale0'
   inside "no docker.sock, ~/.ssh or GPG" 'test ! -e /var/run/docker.sock && test ! -e "$HOME/.ssh" && test ! -e "$HOME/.gnupg"'
   inside "writing to /secrets fails" '! touch /secrets/x'
-  inside "writing to skills fails" '! touch /home/dev/.claude/skills/x'
+  inside "skills belong to the container" 'touch ~/.agents/skills/x ~/.claude/skills/x && rm ~/.agents/skills/x ~/.claude/skills/x'
   inside "/secrets is readable" 'cat /secrets/github/test.token'
   inside "symlink from a project to /secrets works" 'ln -s /secrets/github/test.token ~/projects/link && cat ~/projects/link'
-  inside "relative link in skills works" 'cat ~/.claude/skills/sample/SKILL.md'
   inside "no host credentials" 'test ! -e ~/.claude/.credentials.json && test ! -e ~/.config/gh'
   inside "executing from /secrets fails while the file is readable" 'test -r /secrets/program && ! /secrets/program'
   inside "read-only root" '! touch /usr/x && ! touch /etc/x'

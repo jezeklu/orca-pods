@@ -35,7 +35,7 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   test "$(getent passwd dev | cut -d: -f7)" = /bin/bash || { echo "FAIL  login shell of dev"; exit 1; }
   test -r /usr/share/bash-completion/bash_completion || { echo "FAIL  bash-completion missing"; exit 1; }
   for tool in git gh mc vim htop curl jq rg gcc make python3 uv mise node npm pnpm claude codex opencode \
-    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-runtimes git-credential-pods; do
+    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-runtimes orca-skills git-credential-pods; do
     command -v "$tool" >/dev/null || { echo "FAIL  missing $tool"; exit 1; }
   done
   node --version; pnpm --version; uv --version; mise --version

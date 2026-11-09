@@ -36,6 +36,17 @@ set -- ~/.local/share/orca-server/[0-9]*
 [ "$#" = 2 ] || fail "number of versions: $#"
 pass "the old version stays for a rollback"
 
+# Skills of the running Orca, not from the host, and a removed one stays removed.
+for skill in orca-cli orchestration; do
+  [ -f ~/.agents/skills/$skill/SKILL.md ] && [ -f ~/.claude/skills/$skill/SKILL.md ] || fail "Orca skill $skill"
+done
+[ "$(orca-ide skills get orca-cli 2>/dev/null | head -c 200)" != "" ] || fail "orca skills get"
+pass "Orca skills of $new installed for the agents"
+rm -rf ~/.agents/skills/orchestration ~/.claude/skills/orchestration
+orca-skills
+[ ! -e ~/.agents/skills/orchestration ] && [ -f ~/.agents/skills/orca-cli/SKILL.md ] || fail "orca-skills brought back a removed skill"
+pass "a removed Orca skill stays removed"
+
 if orca-update 0.0.1 2>/dev/null; then fail "a nonexistent version was accepted"; fi
 [ "$(readlink ~/.local/share/orca-server/current)" = "$new" ] || fail "the version changed after a failure"
 pass "a nonexistent version changed nothing"

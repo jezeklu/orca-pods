@@ -22,7 +22,7 @@ Two roles, one standalone script each:
 Host
 ├── Orca desktop ── local client → 127.0.0.1:6769 ──┐
 ├── $PODS_SECRETS_DIR (read-only) ──────────────────┤
-├── ~/.agents/skills, ~/.claude/skills (read-only) ─┤
+├── ~/.gitconfig (read-only) ───────────────────────┤
 └── ~/.local/share/orca-pods/server                 │
       ├── home (projects, agent logins)             │
       └── state (tailscaled)                        │
@@ -37,9 +37,10 @@ Rootless network namespace + firewall ── orca-server container
 
 - [Quick start](#quick-start)
 - [Requirements](#requirements)
+- [What the containers get from the host](#what-the-containers-get-from-the-host)
 - [Client](#client): [first run](#first-run), [daily use](#daily-use), [security boundary](#client-security-boundary)
 - [Tailscale policy](#tailscale-policy)
-- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [projects](#projects), [coding agents](#coding-agents), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
+- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [projects](#projects), [coding agents](#coding-agents), [skills](#skills), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
 - [Development](#development), [Tests](#tests), [CI/CD](#cicd)
 - [Contributing and security](#contributing-and-security), [License](#license)
 
@@ -79,6 +80,42 @@ Then set `PODS_APPIMAGE` and `PODS_VAULT_BASE` in `~/.config/orca-pods/client.en
 Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podman 5.0 or newer. The client also needs Wayland and Orca as an AppImage. Ubuntu 24.04 ships Podman 4.9 and is not supported.
 
 `orca-client packages` and `orca-server packages` print the install command for your distribution, `doctor` checks that everything is in place. Nothing is installed outside the package manager and nothing needs root at runtime.
+
+## What the containers get from the host
+
+This is the whole interface between the host and each container. Nothing else from the host is visible inside: not your home directory, `~/.ssh`, the GPG agent, the Docker or Podman socket, or any credentials. The isolation tests check this.
+
+**Server**
+
+| In the container | From the host | Mode |
+|---|---|---|
+| `/home/dev` | `~/.local/share/orca-pods/<instance>/home`: projects, agent logins, Orca, skills, runtimes | Read-write, belongs to the container only |
+| `/state` | `~/.local/share/orca-pods/<instance>/state`: Tailscale state | Read-write, belongs to the container only |
+| `/secrets` | `$PODS_SECRETS_DIR`: GitHub tokens | Read-only, `noexec,nosuid,nodev` |
+| `/etc/orca-pods/host.gitconfig` | `~/.gitconfig`, when it exists | Read-only, `noexec,nosuid,nodev` |
+| `/etc/machine-id`, `/var/lib/dbus/machine-id` | `~/.local/share/orca-pods/<instance>/machine-id`, a random id the script creates | Read-only |
+| `/dev/net/tun` | The TUN device, for Tailscale | Device |
+| Port 6768 | Published only on `127.0.0.1:6769` of the host | Network |
+
+**Client**
+
+| In the container | From the host | Mode |
+|---|---|---|
+| `/home/dev` | `$PODS_VAULT_BASE/vault-open/home`: the unlocked gocryptfs vault | Read-write |
+| `/state` | `$PODS_VAULT_BASE/vault-open/state`: Tailscale state in the vault | Read-write |
+| `/opt/orca` | The AppImage from `PODS_APPIMAGE`, extracted into `~/.local/share/orca-pods/client/app` | Read-only |
+| `/wayland/wayland-0` | The Wayland socket of your session, with an ACL for the container user only | Read-write, a deliberate hole: the clipboard is shared |
+| `/dev/net/tun` | The TUN device, for Tailscale | Device |
+| Environment | Only `XDG_RUNTIME_DIR=/tmp` and `WAYLAND_DISPLAY` | |
+
+**Both**
+
+- The root file system is read-only, `/tmp` and `/run` are tmpfs.
+- No capabilities except `NET_ADMIN` for Tailscale, and `no-new-privileges`.
+- User IDs are mapped into your subordinate range, so `dev` in the container is not your host user.
+- The firewall in the rootless network namespace allows only outbound TCP 443 and UDP, never the LAN, the VPN or the host. Neither container starts without it.
+
+From your own home directory only three things reach a container: `~/.gitconfig` and the secrets folder on the server, the Wayland socket on the client. Everything else in the tables is data that belongs to the container.
 
 ## Client
 
@@ -193,7 +230,7 @@ Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later chang
 | `PODS_PULL` | `1` | `0` starts with the local image without pulling a new one. |
 | `PODS_STORE` | `~/.local/share/orca-pods` | Where instance data lives, one subfolder per instance. |
 
-Besides `PODS_SECRETS_DIR`, the container gets only these fixed host paths, read-only and only when they exist: `~/.agents/skills`, `~/.claude/skills` and `~/.gitconfig`. See [Paths in the container](#paths-in-the-container).
+Besides `PODS_SECRETS_DIR`, the container gets only `~/.gitconfig` from the host, read-only and only when it exists. Skills are not shared with the host, see [Skills](#skills) and [What the containers get from the host](#what-the-containers-get-from-the-host).
 
 **Several instances.** Each instance has its own store, network namespace, firewall and systemd unit. A second one needs its own settings file with `PODS_INSTANCE` and a different `PODS_PORT`, passed through `PODS_CONFIG`:
 
@@ -214,21 +251,6 @@ PODS_CONFIG=~/.config/orca-pods/work.env orca-server install
 | Start at boot | `~/.config/systemd/user/orca-<instance>.service`, linger | No |
 
 Nothing goes into `/usr` or `/etc`.
-
-### Paths in the container
-
-| Path | Host source | Mode |
-|---|---|---|
-| `/home/dev` | `~/.local/share/orca-pods/<instance>/home` | Read-write |
-| `/home/dev/projects` | Part of `home` | Read-write |
-| `/state` | `~/.local/share/orca-pods/<instance>/state` | Read-write |
-| `/home/dev/.local/share/orca-server` | Part of `home`, Orca versions and the `current` link | Read-write |
-| `/secrets` | `$PODS_SECRETS_DIR` | Read-only, `noexec,nosuid,nodev` |
-| `/home/dev/.agents/skills` | `~/.agents/skills` | Read-only |
-| `/home/dev/.claude/skills` | `~/.claude/skills` | Read-only |
-| `/etc/orca-pods/host.gitconfig` | `~/.gitconfig` | Read-only |
-
-Symlinks in `~/.claude/skills` must be relative (`../../.agents/skills/…`) to resolve in the container.
 
 ### Projects
 
@@ -264,6 +286,10 @@ Each agent logs in separately inside the container:
 Claude Code, Codex and OpenCode come with the image. `agy` is not on npm and updates itself, so it is optional: set `PODS_TOOLS="agy"` and it is installed at the next start into `/home/dev/.local/bin/agy`, inside the container only. The installer comes from Google and checks a SHA-512 from the same server, which guards against broken downloads, not against a compromised source.
 
 `PODS_TOOLS="openspec"` installs the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI from npm into `/home/dev/.local`, `orca-server update` updates it. Its skills and commands belong to the project: `openspec init` writes them into the repository, so they arrive with the clone.
+
+### Skills
+
+Skills live in the container home, `/home/dev/.agents/skills` and the folders of each agent, and nothing comes from the host. The server installs the Orca skills `orca-cli` and `orchestration` from its own Orca, so they match its version, and updates them after each `orca-update`. A skill you remove stays removed, a copy you changed is never replaced. Add more with `orca skills install --skill <name>` in a container terminal, `orca skills list` shows what this Orca ships.
 
 ### Git and GitHub
 

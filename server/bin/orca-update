@@ -73,4 +73,5 @@ for dir in "$APP"/[0-9]*; do
   name=${dir##*/}
   [ "$name" = "$version" ] || [ "$name" = "$previous" ] || rm -rf "$dir"
 done
+orca-skills || true
 echo "Orca $version installed."

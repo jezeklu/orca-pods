@@ -30,7 +30,7 @@ These are the point of the project. Do not weaken them, and flag any change that
 
 - The container never gets the Docker or Podman socket, `~/.ssh`, the GPG agent or any host credentials.
 - The firewall lives in the rootless network namespace, outside the container's reach. Neither role starts without it. The container must not reach the LAN, the VPN or host services.
-- The server container gets only a read-only secrets folder and skills from the host. The host never executes what the container wrote. Host updates come only from a signed release.
+- The server container gets only a read-only secrets folder and `~/.gitconfig` from the host. The host never executes what the container wrote. Host updates come only from a signed release.
 - No secrets, tokens, pairing codes, real hostnames, private paths or personal data in the repository, in tests or in examples. Use generic placeholders such as `example-user`, `example-org` or `server`.
 - Never print token or pairing-code values in logs or test output.
 

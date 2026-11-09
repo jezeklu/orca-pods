@@ -1,0 +1,19 @@
+#!/bin/bash
+# Orca skills of the installed Orca version, for every coding agent Orca detects in the container.
+# The first run installs the defaults. Later runs only update the skills that are there, so a skill
+# removed in Orca stays removed, and more can be added from Orca, with this server as the target.
+set -u
+DEFAULTS="orca-cli orchestration"
+marker=$HOME/.local/state/orca-pods/skills-installed
+[ -x "$HOME/.local/share/orca-server/current/resources/bin/orca-ide" ] || exit 0
+
+if [ ! -f "$marker" ]; then
+  args=()
+  for skill in $DEFAULTS; do args+=(--skill "$skill"); done
+  orca-ide skills install "${args[@]}" >/dev/null || { echo "WARNING: could not install the Orca skills." >&2; exit 1; }
+  mkdir -p "${marker%/*}"
+  touch "$marker"
+else
+  # Copies someone changed are skipped and reported, never replaced.
+  orca-ide skills update --all >/dev/null || echo "WARNING: could not update the Orca skills." >&2
+fi
