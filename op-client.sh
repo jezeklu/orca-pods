@@ -5,6 +5,7 @@
 #   op-client           start Orca, the first start installs the latest Orca
 #   op-client login     log the running client in to Tailscale, from a second terminal
 #   op-client orca-update [version]  switch to the latest or the given Orca while the client is closed
+#   op-client status    Orca versions of the client and, while it runs, of the paired servers
 #   op-client cleanup   manual cleanup after a crash or kill -9
 #   op-client doctor    check requirements
 #   op-client packages  print the command that installs the packages
@@ -69,13 +70,27 @@ check_requirements() {
 
 # Downloads and extracts in the container behind the firewall, the host never runs the AppImage.
 # Needs the network from net_up.
-fetch_orca() { # [version]
+release() { # orca-release arguments
   mkdir -p "$ORCA_DIR"
   pod unshare chown "$DEV_IN_NS:$DEV_IN_NS" "$ORCA_DIR"
   pod run --rm --name orca-pods-update --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 \
     --uidmap 0:1:65536 --gidmap 0:1:65536 --user dev --cap-drop=all \
     --security-opt no-new-privileges --security-opt label=disable --read-only --tmpfs /tmp \
-    --mount "type=bind,src=$ORCA_DIR,dst=/orca" orca-pods orca-release switch /orca ${1:+"$1"}
+    --mount "type=bind,src=$ORCA_DIR,dst=/orca" orca-pods orca-release "$@"
+}
+
+fetch_orca() { # [version]
+  release switch /orca ${1:+"$1"}
+}
+
+# For the short containers while the client is closed, behind the same firewall.
+# Callers run require_free before any Podman command, Podman creates the runroot.
+closed_client_net() {
+  trap 'teardown >/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  pod image exists orca-pods || { echo "Image orca-pods is missing, start the client once." >&2; exit 1; }
+  net_up
+  firewall_rules | load_fw
 }
 
 orca_update() { # [version]
@@ -83,15 +98,59 @@ orca_update() { # [version]
     *[!0-9.]*|.*|*.|*..*) echo "Usage: $prog orca-update [version such as 1.4.255]" >&2; exit 1 ;;
   esac
   require_free
-  trap 'teardown >/dev/null' EXIT
-  trap 'exit 130' INT TERM HUP
   update_image
-  pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; exit 1; }
-  net_up
-  firewall_rules | load_fw
+  closed_client_net
   echo "Installing Orca ${1:-latest}..."
   version=$(fetch_orca "$@")
   echo "Orca $version installed, the client uses it at the next start."
+}
+
+orca_line() { # installed latest
+  if [ -z "$1" ]; then
+    echo "Orca: not installed${2:+, $2 available}. The next start installs the latest, or: $prog orca-update <version>"
+  elif [ -z "$2" ]; then
+    echo "Orca: $1, the latest version is unknown."
+  elif [ "$1" = "$2" ]; then
+    echo "Orca: $1, the latest version."
+  else
+    echo "Orca: $1, $2 available. Switch with the client closed: $prog orca-update"
+  fi
+}
+
+# The pairings live in the vault, so the servers are known only while the client runs.
+paired_servers() {
+  pod exec -u dev orca-pods-client sh -c '
+    cli=/opt/orca/resources/bin/orca-ide
+    $cli environment list --json 2>/dev/null \
+      | jq -r ".result.environments[]? | [.id, (.name | gsub(\"[[:cntrl:]]\"; \"\"))] | @tsv" \
+      | while IFS="$(printf "\t")" read -r id name; do
+          version=$($cli status --environment "$id" --json 2>/dev/null | jq -r ".result.runtime.appVersion // empty")
+          printf "%s\t%s\n" "${version:-unreachable}" "$name"
+        done'
+}
+
+show_status() {
+  installed=$(readlink "$ORCA_DIR/current" 2>/dev/null || true)
+  if [ ! -e "$RUNROOT" ]; then
+    echo "The client is not running."
+    closed_client_net
+    orca_line "$installed" "$(release version 2>/dev/null || true)"
+    echo "Servers: their pairings are in the vault, start the client or run op-server status on the server."
+    return 0
+  fi
+  [ "$(pod container inspect --format '{{.State.Running}}' orca-pods-client 2>/dev/null)" = true ] || require_free
+  echo "The client is running."
+  echo "Tailscale: $(tailscale_state || true)"
+  orca_line "$installed" "$(pod exec orca-pods-client orca-release version 2>/dev/null || true)"
+  servers=$(paired_servers || true)
+  [ -n "$servers" ] || { echo "Servers: none paired."; return 0; }
+  printf '%s\n' "$servers" | while IFS="$(printf '\t')" read -r version name; do
+    case "$version" in
+      unreachable) echo "Server $name: unreachable" ;;
+      "$installed") echo "Server $name: Orca $version, the same as the client" ;;
+      *) echo "Server $name: Orca $version. Match it with the client closed: $prog orca-update $version" ;;
+    esac
+  done
 }
 
 tailscale_state() {
@@ -157,8 +216,9 @@ main() {
     "") run_client ;;
     login) tailscale_login ;;
     orca-update) shift; orca_update "$@" ;;
+    status) show_status ;;
     cleanup) teardown ;;
-    *) echo "Usage: $prog [login|orca-update|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [login|status|orca-update|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 

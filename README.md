@@ -140,6 +140,7 @@ podman unshare umount "$PWD/vault-open"
 ```bash
 op-client            # pulls a new image, unlocks the vault, starts Orca, restores everything on exit
 op-client login      # from a second terminal, first run only: Tailscale login
+op-client status     # Orca versions of the client and of the paired servers
 op-client cleanup    # only after a crash or kill -9
 ```
 
@@ -151,6 +152,8 @@ The client has its own Orca, independent of any Orca installed on the host, so i
 op-client orca-update            # the latest release
 op-client orca-update 1.4.255    # a given version, also the way back
 ```
+
+`op-client status` shows which version the client runs and which is the latest. While the client runs, it also asks every paired server for its Orca version over Tailscale and prints the command that matches the client to it. The pairings live in the vault, so a closed client cannot reach the servers: start it, or run `op-server status` on the server.
 
 A short container behind the same firewall downloads the release, checks its SHA-512 and extracts it, the host never runs the AppImage. The current and the previous version stay on disk. Orca's own update prompt cannot apply inside the container, use `orca-update` instead.
 

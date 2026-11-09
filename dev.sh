@@ -80,6 +80,24 @@ run_tests() {
   kill "$srvpid" 2>/dev/null || true
   teardown; trap - EXIT; rm -rf "$srv"
   sleep 1
+  echo "--- status"
+  net_up
+  firewall_rules | load_fw
+  start_client --tmpfs /state --tmpfs /home/dev:rw,mode=1777 \
+    --mount "type=bind,src=$(readlink -f "$ORCA_DIR/current"),dst=/opt/orca,readonly"
+  status=$(show_status 2>&1)
+  teardown >/dev/null
+  case "$status" in
+    *"Orca: 1.4.241, "*" available. "*"Servers: none paired."*) echo "OK    status of a running client" ;;
+    *) echo "FAIL  status of a running client: $status"; FAILS=$((FAILS + 1)) ;;
+  esac
+  status=$( (show_status) 2>&1)
+  case "$status" in
+    *"not running"*"Orca: 1.4.241, "*" available. "*"op-server status"*) echo "OK    status of a closed client" ;;
+    *) echo "FAIL  status of a closed client: $status"; FAILS=$((FAILS + 1)) ;;
+  esac
+  if (orca_update 1.4.241) >/dev/null 2>&1 && [ ! -e "$RUNROOT" ]; then echo "OK    orca-update of a closed client"
+  else echo "FAIL  orca-update of a closed client"; FAILS=$((FAILS + 1)); fi
   echo "--- host"
   echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward) br-orca-pods=$(ip -br link | grep -c br-orca-pods || true) pasta=$(pgrep -c pasta || true)"
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }
