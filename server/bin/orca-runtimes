@@ -1,0 +1,57 @@
+#!/bin/bash
+# Language runtimes next to the image Node, installed by mise into the home directory.
+#   orca-runtimes [--update] node@24 python@3.13
+# Without --update only missing runtimes are installed. With it, each gets its newest matching release
+# and older ones of the same line are removed.
+set -u
+update=0
+if [ "${1:-}" = --update ]; then update=1; shift; fi
+
+# Left over from fnm, which mise replaced.
+rm -rf "$HOME/.local/share/fnm" "$HOME/.local/state/fnm_multishells"
+
+# The image Node is linked into mise, so a project asking for its major downloads nothing.
+# After a new image the old link still points at /opt/node, which now holds another version,
+# and the aliases such as 26 point at that link.
+image=$(/opt/node/bin/node --version)
+image=${image#v}
+nodes=$HOME/.local/share/mise/installs/node
+for link in "$nodes"/*; do
+  if [ -L "$link" ] && [ "$(readlink "$link")" = /opt/node ] && [ "${link##*/}" != "$image" ]; then rm -f "$link"; fi
+done
+for link in "$nodes"/*; do
+  if [ -L "$link" ] && [ ! -e "$link" ]; then rm -f "$link"; fi
+done
+[ -e "$nodes/$image" ] || mise link "node@$image" /opt/node >/dev/null
+# Shims serve shells without the mise hook, see profile.sh.
+mise reshim
+
+# Versions of a tool installed for a line such as 24 or 3.13, without the image Node.
+installed() { # tool line
+  mise ls --installed --json "$1" 2>/dev/null \
+    | jq -r --arg l "$2" '.[] | select(.symlinked_to == null) | .version | select(. == $l or startswith($l + "."))'
+}
+
+fails=0
+for spec in "$@"; do
+  tool=${spec%%@*}
+  line=${spec#*@}
+  if ! [[ "$spec" =~ ^[a-z][a-z0-9-]*@[0-9][0-9.]*$ ]]; then
+    echo "Invalid runtime '$spec', use tool@version, for example node@24." >&2
+    fails=1
+    continue
+  fi
+  [ "$tool@${line%%.*}" != "node@${image%%.*}" ] || continue
+  old=$(installed "$tool" "$line")
+  [ -z "$old" ] || [ "$update" = 1 ] || continue
+  if ! new=$(mise latest "$spec" 2>/dev/null) || [ -z "$new" ]; then
+    echo "WARNING: cannot find a release of $spec." >&2
+    fails=1
+    continue
+  fi
+  mise install --quiet "$tool@$new" || { echo "WARNING: cannot install $tool $new." >&2; fails=1; continue; }
+  for version in $old; do
+    [ "$version" = "$new" ] || mise uninstall --quiet "$tool@$version"
+  done
+done
+exit "$fails"

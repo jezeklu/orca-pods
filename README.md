@@ -14,7 +14,7 @@ Isolated Orca ADE pods: GUI client and headless server in hardened containers, c
 Two roles, one standalone script each:
 
 - **`orca-client`:** a separate Orca instance in a rootless container that talks to the server only over Tailscale. It shares no state with the host or with a native Orca installation.
-- **`orca-server`:** a headless Orca in a rootless container with your projects, coding agents and Tailscale. The host passes in only what you choose and never executes anything the container wrote.
+- **`orca-server`:** a headless Orca in a rootless container with your projects, coding agents and Tailscale. The host passes in only what you choose and never executes anything the container wrote. The image is built for Node.js projects, other languages come through mise, see [Node and other runtimes](#node-and-other-runtimes).
 
 > orca-pods is an independent project. It is not affiliated with or endorsed by the Orca authors and does not redistribute Orca: the client runs your own AppImage, the server downloads official releases and verifies their checksums.
 
@@ -186,7 +186,7 @@ Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later chang
 |---|---|---|
 | `PODS_SECRETS_DIR` | `~/.local/share/orca-pods/secrets` | The only host folder you choose for the container, mounted read-only at `/secrets`. It holds the [GitHub tokens](#git-and-github). It must be an absolute path on a local file system with ACL support, not your home directory or above it, not inside `.ssh`, without `:` or `,`. `install` creates it and grants the container user read access. |
 | `PODS_TOOLS` | empty | Optional tools installed into the container home at start, space-separated. Off by default. Supported: `agy` (Antigravity CLI) and `openspec` (OpenSpec CLI), see [Coding agents](#coding-agents). |
-| `PODS_NODE_VERSIONS` | empty | Extra Node major versions next to the image one, for example `24`. |
+| `PODS_RUNTIMES` | empty | Runtimes next to the image Node, installed by mise at start, for example `node@24 python@3.13`. See [Node and other runtimes](#node-and-other-runtimes). |
 | `PODS_PORT` | `6769` | Port on `127.0.0.1` for a local Orca. |
 | `PODS_MEMORY` | `10g` | Memory limit of the container. |
 | `PODS_IMAGE` | `docker.io/jezeklu/orca-pods:server` | Image to run, for forks. |
@@ -293,9 +293,15 @@ nano "$PODS_SECRETS_DIR/github/<owner>.token"
 
 A renewed token goes into the same file, no restart needed.
 
-### Node
+### Node and other runtimes
 
-The image ships the current Node release. Extra major versions go into `PODS_NODE_VERSIONS`, they stay in the home directory and `.nvmrc` switches between them.
+The server image is made for Node.js projects. It ships the current Node release in `/opt/node` with npm and pnpm, the system libraries for Playwright's Chromium, and build tools for native modules (`gcc`, `make`, `python3`). Other languages are not in the image, mise installs them into the home directory.
+
+[mise](https://mise.jdx.dev) picks the versions on every `cd`: `.nvmrc`, `.node-version`, `.tool-versions` or `mise.toml`, also from a parent folder. A folder without them gets the image Node. Shells without the mise hook, such as the commands of coding agents, get the same versions through the mise shims on the `PATH`. The image Node is linked into mise, so a project asking for its major downloads nothing.
+
+Other versions and languages live in `/home/dev/.local/share/mise` and survive a new image. `PODS_RUNTIMES="node@24 python@3.13"` installs them at the next start and `orca-server update` moves them to their newest release. A project that asks for something missing gets it on the first command, or run `mise install` in its folder. mise never stops a shell at a question: project configuration under `/home/dev` is trusted, because projects in the container run their own code anyway. Languages that compile from source, such as Ruby, may need build libraries from the `Dockerfile`.
+
+`npm install -g --prefix ~/.local <package>` and `uv tool install <package>` put tools into `/home/dev/.local/bin`. The system is read-only and there is no `sudo`, so a package from the distribution goes into the `Dockerfile` and comes with the next image. Forks set their own image with `PODS_IMAGE`.
 
 ### Updates
 
@@ -304,7 +310,7 @@ The image ships the current Node release. Extra major versions go into `PODS_NOD
 | Orca | Whenever you want | `orca-update` in a container terminal, terminals keep running |
 | Orca rollback | After a bad version | `orca-update <version>`, the previous version stays on disk |
 | Image | At boot, when newer | `orca-server start`, or pull ahead with `orca-server update` |
-| Extra Node versions, `PODS_TOOLS` | Whenever you want | `orca-server update` on a running server with the current image. After a new image it asks for a restart first |
+| `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `orca-server update` on a running server with the current image. After a new image it asks for a restart first |
 | Host script | When you release it | `orca-server self-update`, changes nothing without a valid signature |
 
 ### Data lifetime
@@ -312,7 +318,7 @@ The image ships the current Node release. Extra major versions go into `PODS_NOD
 | What | Path in the container | Survives a new image | Removed by |
 |---|---|---|---|
 | Node from the image | Image | No | Image update |
-| Extra Node versions | `/home/dev/.local/share/fnm` | Yes | `fnm uninstall` |
+| Runtimes from mise | `/home/dev/.local/share/mise` | Yes | `mise uninstall` |
 | pnpm store | `/home/dev/.local/share/pnpm` | Yes | `pnpm store prune` |
 | Projects, `node_modules` | `/home/dev/projects` | Yes | You |
 | Agent logins | `/home/dev` | Yes | You |

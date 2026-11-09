@@ -14,25 +14,25 @@ RUN apt-get update && apt-get upgrade -y \
       libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
       libwayland-client0 libwayland-cursor0 libwayland-egl1 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 30100 dev
+    && useradd -m -s /bin/bash -u 30100 dev
 
 FROM base AS server
 ARG UV_VERSION=0.13.7
-ARG FNM_VERSION=1.39.0
-ARG FNM_SHA256=7807664f39d39fc518da1c35ba0181e4b3267603c4b1dedeb4b5fc6ae440a224
+ARG UV_SHA256=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
+ARG MISE_VERSION=2026.10.19
+ARG MISE_SHA256=3162760f40b6b5f706c60641e4ef5ee7322bc6c54f72fc26a7111b337aa18d9d
 RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
       https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends \
       gh mc htop jq ripgrep build-essential python3 xvfb xauth dbus-x11 procps less nano \
-      unzip xz-utils file openssl libxss1 libxfixes3 \
-    && curl -fsSL "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/uv.tar.gz \
-    && echo "$(curl -fsSL "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz.sha256" | cut -d" " -f1)  /tmp/uv.tar.gz" | sha256sum -c - \
+      unzip xz-utils file openssl libxss1 libxfixes3 vim bash-completion \
+    && curl -fsSL --retry 5 "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/uv.tar.gz \
+    && echo "$UV_SHA256  /tmp/uv.tar.gz" | sha256sum -c - \
     && tar xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin \
-    && curl -fsSL "https://github.com/Schniz/fnm/releases/download/v$FNM_VERSION/fnm-linux.zip" -o /tmp/fnm.zip \
-    && echo "$FNM_SHA256  /tmp/fnm.zip" | sha256sum -c - \
-    && unzip -q /tmp/fnm.zip -d /usr/local/bin && chmod +x /usr/local/bin/fnm \
+    && curl -fsSL --retry 5 "https://github.com/jdx/mise/releases/download/v$MISE_VERSION/mise-v$MISE_VERSION-linux-x64" -o /usr/local/bin/mise \
+    && echo "$MISE_SHA256  /usr/local/bin/mise" | sha256sum -c - && chmod +x /usr/local/bin/mise \
     && NODE=$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '[.[] | select(.version | startswith("v26."))][0].version') \
     && curl -fsSL "https://nodejs.org/dist/$NODE/node-$NODE-linux-x64.tar.xz" -o "/tmp/node-$NODE-linux-x64.tar.xz" \
     && curl -fsSL "https://nodejs.org/dist/$NODE/SHASUMS256.txt" | grep " node-$NODE-linux-x64.tar.xz$" | (cd /tmp && sha256sum -c -) \
@@ -42,12 +42,12 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && npx -y playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/* /tmp/* /root/.npm /root/.cache \
     && mkdir -p /etc/orca-pods /secrets && touch /etc/orca-pods/host.gitconfig \
-    && echo 'eval "$(fnm env --use-on-cd --version-file-strategy=recursive --shell bash)"' >> /etc/bash.bashrc
+    && echo 'eval "$(mise activate bash)"' >> /etc/bash.bashrc
 COPY server/bin/ /usr/local/bin/
 COPY server/gitconfig /etc/gitconfig
 COPY server/profile.sh /etc/profile.d/orca-pods.sh
-ENV PATH=/home/dev/.local/bin:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ENV FNM_DIR=/home/dev/.local/share/fnm
+COPY server/mise.toml /etc/mise/config.toml
+ENV PATH=/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV PNPM_HOME=/home/dev/.local/share/pnpm
 CMD ["/usr/local/bin/orca-server-init"]
 

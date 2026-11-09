@@ -1,0 +1,11 @@
+# System settings of mise in the server image. Nothing here may stop a shell at a question:
+# Orca terminals, agents and the subshell of mc would hang on it.
+[settings]
+# Projects in the container already run their own code, so their mise.toml needs no trust prompt.
+trusted_config_paths = ["/home/dev"]
+# .nvmrc and .node-version keep working as with nvm.
+idiomatic_version_file_enable_tools = ["node"]
+# mise lives in the read-only image and is updated with it.
+disable_update_warning = true
+# A version a project asks for and that is not installed is reported, mise install fetches it.
+status.missing_tools = "always"

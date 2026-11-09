@@ -50,6 +50,12 @@ for tools in 'agy;id' 'agy $(id)' 'AGY'; do
 done
 ( PODS_SOURCED=1 PODS_TOOLS='agy other-tool' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
 ok "PODS_TOOLS list accepted" $? 0
+for runtimes in 'node@24;id' 'node@$(id)' 'node@24 python/3'; do
+  ( PODS_SOURCED=1 PODS_RUNTIMES=$runtimes sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+  ok "PODS_RUNTIMES '$runtimes' rejected" $? 1
+done
+( PODS_SOURCED=1 PODS_RUNTIMES='node@24 python@3.13 go@1.25' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+ok "PODS_RUNTIMES list accepted" $? 0
 
 # A rejected saved login falls back to an anonymous pull, other errors do not.
 pull_log=$tmp/pull.log

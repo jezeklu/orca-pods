@@ -32,12 +32,14 @@ pod images orca-pods
 if [ "${1:-}" != e2e ]; then
 pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   test "$(id -u dev)" = 30100
-  for tool in git gh mc htop curl jq rg gcc make python3 uv fnm node npm pnpm claude codex opencode \
-    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-node git-credential-pods; do
+  test "$(getent passwd dev | cut -d: -f7)" = /bin/bash || { echo "FAIL  login shell of dev"; exit 1; }
+  test -r /usr/share/bash-completion/bash_completion || { echo "FAIL  bash-completion missing"; exit 1; }
+  for tool in git gh mc vim htop curl jq rg gcc make python3 uv mise node npm pnpm claude codex opencode \
+    Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-runtimes git-credential-pods; do
     command -v "$tool" >/dev/null || { echo "FAIL  missing $tool"; exit 1; }
   done
-  node --version; pnpm --version; uv --version; fnm --version
-  su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
+  node --version; pnpm --version; uv --version; mise --version
+  su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/home/dev/.local/share/mise/shims:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
 ./orca-server.sh test
 fi
@@ -48,8 +50,8 @@ mkdir -p "$sec/github"
 printf 'token-user\n' >"$sec/github/example-user.token"
 printf 'token-org\n' >"$sec/github/example-org.token"
 printf 'token-default\n' >"$sec/github/default.token"
-PODS_SECRETS_DIR=$sec PODS_NODE_VERSIONS=24
-export PODS_SECRETS_DIR PODS_NODE_VERSIONS
+PODS_SECRETS_DIR=$sec PODS_RUNTIMES=node@24
+export PODS_SECRETS_DIR PODS_RUNTIMES
 trap './orca-server.sh stop >/dev/null 2>&1 || true' EXIT
 ./orca-server.sh start
 pod exec --user dev orca-server orca-update 1.4.241

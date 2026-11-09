@@ -10,7 +10,7 @@
 #   orca-server pair [--mobile]   print pairing codes
 #   orca-server unpair <id>       revoke a paired device, its id is in status
 #   orca-server rename <id> <name>  name a paired device
-#   orca-server update            pull a new image and Node patch releases
+#   orca-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS
 #   orca-server self-update       replace this script, only with a validly signed release
 #   orca-server test [URL]        isolation tests, without data and only while the server is stopped
 #   orca-server cleanup           manual cleanup after a crash
@@ -26,7 +26,11 @@ ROLE=server
 PORT="${PODS_PORT:-6769}"
 DEFAULT_SECRETS="${XDG_DATA_HOME:-$HOME/.local/share}/orca-pods/secrets"
 SECRETS="${PODS_SECRETS_DIR:-}"
-NODE_VERSIONS="${PODS_NODE_VERSIONS:-}"
+RUNTIMES="${PODS_RUNTIMES:-}"
+case "$RUNTIMES" in
+  *[!a-z0-9@.\ -]*) echo "PODS_RUNTIMES is a space-separated list such as \"node@24 python@3.13\"." >&2; exit 1 ;;
+esac
+[ -z "${PODS_NODE_VERSIONS:-}" ] || echo "WARNING: PODS_NODE_VERSIONS is replaced by PODS_RUNTIMES, for example PODS_RUNTIMES=\"node@24\"." >&2
 TOOLS="${PODS_TOOLS:-}"
 case "$TOOLS" in
   *[!a-z0-9\ -]*) echo "PODS_TOOLS is a space-separated list of tool names." >&2; exit 1 ;;
@@ -149,9 +153,10 @@ start_server() {
     -v "$SECRETS:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   trap - HUP INT TERM
   pod exec -d --user dev orca-server orca-serve >/dev/null
-  # Offline start must not fail on this, Node for projects is not needed to reach the server.
-  # shellcheck disable=SC2086 # list of majors
-  pod exec --user dev orca-server orca-node $NODE_VERSIONS || echo "WARNING: could not install the extra Node versions." >&2
+  # Offline start must not fail on this, runtimes for projects are not needed to reach the server.
+  [ -z "$RUNTIMES" ] || echo "Installing $RUNTIMES if missing..."
+  # shellcheck disable=SC2086 # list of runtimes
+  pod exec --user dev orca-server orca-runtimes $RUNTIMES || echo "WARNING: could not install PODS_RUNTIMES ($RUNTIMES)." >&2
   [ -z "$TOOLS" ] || echo "Installing $TOOLS if missing..."
   # shellcheck disable=SC2086 # list of tools
   [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
@@ -220,9 +225,9 @@ update_all() {
     return 0
   fi
   echo "The image is up to date."
-  echo "Updating Node.js $NODE_VERSIONS..."
-  # shellcheck disable=SC2086 # list of majors
-  pod exec --user dev orca-server orca-node --update $NODE_VERSIONS
+  [ -z "$RUNTIMES" ] || echo "Updating $RUNTIMES..."
+  # shellcheck disable=SC2086 # list of runtimes
+  pod exec --user dev orca-server orca-runtimes --update $RUNTIMES
   [ -z "$TOOLS" ] || echo "Updating $TOOLS..."
   # shellcheck disable=SC2086 # list of tools
   [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools --update $TOOLS
