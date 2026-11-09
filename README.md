@@ -70,10 +70,11 @@ Client, on a desktop with Wayland:
 curl -fsSL -o ~/.local/bin/op-client https://github.com/jezeklu/orca-pods/releases/latest/download/op-client
 chmod +x ~/.local/bin/op-client
 op-client packages     # install what it prints, then
-op-client doctor
+op-client install      # settings, the vault and Orca, asks for a new vault password
+op-client              # start Orca
 ```
 
-Then set `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `op-client`.
+To keep the vault elsewhere than `~/.local/share/orca-pods/client-vault`, set `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env` before `install`, see [First run](#first-run).
 
 ## Requirements
 
@@ -123,17 +124,9 @@ From your own home directory only three things reach a container: `~/.gitconfig`
 
 Download `op-client` from the [latest release](https://github.com/jezeklu/orca-pods/releases/latest) into `~/.local/bin`, or build it from a checkout: `./build.sh` writes the standalone files `dist/op-client` and `dist/op-server`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
 
-Create the vault once. Store the password and the master key safely, without them the data is lost. `PODS_VAULT_BASE` is the directory from `client.env`.
+`op-client install` checks the requirements and creates `~/.config/orca-pods/client.env` with `PODS_VAULT_BASE="~/.local/share/orca-pods/client-vault"` unless the file exists. A missing vault is created in `$PODS_VAULT_BASE/vault`, with `vault-open` next to it as the mount point. It asks for the new password twice, once to create the vault and once to set it up. Store the password and the master key it prints safely, without them the data is lost. An existing vault is kept. Last, it installs the latest Orca.
 
-```bash
-cd "$PODS_VAULT_BASE"
-mkdir vault vault-open
-gocryptfs -init vault
-podman unshare gocryptfs -allow_other "$PWD/vault" "$PWD/vault-open"
-podman unshare sh -c 'cd vault-open && mkdir home state \
-  && chown 30101:30101 home && chown 1:1 state && chmod 700 home state'
-podman unshare umount "$PWD/vault-open"
-```
+`op-client uninstall` removes the images and Orca and keeps the settings and the vault, it prints where they are.
 
 ### Daily use
 
@@ -141,6 +134,7 @@ podman unshare umount "$PWD/vault-open"
 op-client            # pulls a new image, unlocks the vault, starts Orca, restores everything on exit
 op-client login      # from a second terminal, first run only: Tailscale login
 op-client status     # Orca versions of the client and of the paired servers
+op-client shell      # a shell in the vault while the client is closed
 op-client cleanup    # only after a crash or kill -9
 ```
 
@@ -157,11 +151,7 @@ op-client orca-update 1.4.255    # a given version, also the way back
 
 A short container behind the same firewall downloads the release, checks its SHA-512 and extracts it, the host never runs the AppImage. The current and the previous version stay on disk. Orca's own update prompt cannot apply inside the container, use `orca-update` instead.
 
-The vault is mounted only inside Podman's user namespace, so ordinary host processes see `vault-open/` empty. While the client runs, the content is visible with:
-
-```bash
-podman unshare ls -la "$PODS_VAULT_BASE/vault-open"
-```
+The vault is mounted only inside Podman's user namespace, so ordinary host processes see `vault-open/` empty. To look into it, close the client and run `op-client shell`, or `op-client shell -- ls -la` for one command. It asks for the vault password every time and starts a short container with the vault at `/home/dev`, without a network, capabilities or a writable system. The vault is locked again when the shell ends. While the client runs, the shell refuses to start.
 
 Back up `vault/` through `podman unshare`, its files belong to mapped UIDs:
 
@@ -182,7 +172,7 @@ Protected:
 
 Not protected:
 
-- **Processes running as the host user.** They can use `podman exec` or `podman unshare` and reach the running client and its pairing token. The container stops accidental reads, not a targeted attack from your own account. Revoke the token if in doubt.
+- **Processes running as the host user.** While the client runs, the vault is unlocked. Its files belong to a mapped UID, so an ordinary read from your account fails, but a script that uses `podman exec` or `podman unshare` reaches the vault and the pairing token without a password. The container stops accidental reads, not a targeted attack from your own account; only a separate host account would. A closed client leaves only the encrypted vault. Revoke the token if in doubt.
 - Root on the host and kernel vulnerabilities: a container is not a VM.
 - Wayland: the clipboard is shared and the socket is a deliberate hole. `label=disable` turns SELinux off for the container.
 - The Chromium sandbox is off (`--no-sandbox`), the container is the boundary for the built-in browser.
@@ -205,6 +195,7 @@ chmod +x ~/.local/bin/op-server
 op-server install      # image, Orca, start at boot, no root
 op-server login        # Tailscale with tag:orca-server
 op-server pair         # pairing codes for 127.0.0.1 and for the tailnet
+op-server shell        # a shell as dev in the running server, or: op-server shell -- <command>
 ```
 
 A local Orca on the same host pairs with the `127.0.0.1` code. Orca warns that the link points back to this device; turn on its option for an SSH tunnel, because the port is forwarded into the container in the same way. Remote clients and phones use the tailnet code.

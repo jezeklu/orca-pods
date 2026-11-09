@@ -7,6 +7,7 @@
 #   op-server start | stop      start or stop the server
 #   op-server restart           stop and start, picks up a new image and settings
 #   op-server login             log the server in to Tailscale
+#   op-server shell [-- command]  a shell as dev in the running server
 #   op-server status            server status, Orca versions and paired devices
 #   op-server pair [--mobile]   print pairing codes
 #   op-server unpair <id>       revoke a paired device, its id is in status
@@ -215,6 +216,15 @@ rename_device() {
   require_running
   [ -n "${2:-}" ] || { echo "Usage: $prog rename <device id from $prog status> <name>" >&2; exit 1; }
   pod exec --user dev orca-pods-server orca-devices rename "$1" "$2"
+}
+
+server_shell() { # [-- command]
+  require_running
+  [ "${1:-}" != -- ] || shift
+  tty=-i
+  [ ! -t 0 ] || [ ! -t 1 ] || tty=-it
+  [ "$#" -gt 0 ] || set -- bash -l
+  pod exec "$tty" --user dev --workdir /home/dev orca-pods-server "$@"
 }
 
 orca_update() {
@@ -463,6 +473,7 @@ main() {
     restart) restart_server ;;
     status) show_status ;;
     login) tailscale_login ;;
+    shell) shift; server_shell "$@" ;;
     pair) shift; pairing "$@" ;;
     unpair) shift; unpair "$@" ;;
     rename) shift; rename_device "$@" ;;
@@ -470,7 +481,7 @@ main() {
     orca-update) shift; orca_update "$@" ;;
     self-update) self_update ;;
     test) shift; run_tests "$@" ;;
-    *) echo "Usage: $prog [install|uninstall|start|stop|restart|status|login|pair|unpair|rename|update|orca-update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [install|uninstall|start|stop|restart|status|login|shell|pair|unpair|rename|update|orca-update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 

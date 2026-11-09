@@ -119,6 +119,8 @@ pod exec --user dev orca-pods-server sh -c 'for i in $(seq 30); do orca-ide stat
 test "$(pod exec orca-pods-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
 echo "OK    fixed machine id, a new image does not leave a foreign Orca lock"
 ./op-server.sh restart >/dev/null
+[ "$(./op-server.sh shell -- sh -c 'id -u; pwd' </dev/null | tr '\n' ' ')" = "30100 /home/dev " ] || { echo "FAIL  shell"; exit 1; }
+echo "OK    shell as dev in the server"
 [ "$(pod container inspect --format '{{.State.Running}}' orca-pods-server)" = true ] || { echo "FAIL  restart"; exit 1; }
 echo "OK    restart"
 ./op-server.sh stop

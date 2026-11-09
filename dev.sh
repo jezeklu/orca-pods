@@ -24,6 +24,42 @@ check() { # name expected(pass|block) curl-args...
   if [ "$got" = "$want" ]; then echo "OK    $name ($got)"; else echo "FAIL  $name: expected $want, got $got"; FAILS=$((FAILS + 1)); fi
 }
 
+fail() { echo "FAIL  $1"; FAILS=$((FAILS + 1)); }
+
+# A throwaway vault in .local, passwords come on stdin, gocryptfs reads them line by line.
+vault_tests() {
+  echo "--- vault"
+  if ! command -v gocryptfs >/dev/null; then echo "SKIP  vault, gocryptfs is not installed"; return 0; fi
+  VAULT_BASE=$PWD/.local/test-vault VAULT=$PWD/.local/test-vault/vault OPEN=$PWD/.local/test-vault/vault-open
+  CONFIG=$PWD/.local/test-client.env
+  podman unshare rm -rf "$VAULT_BASE"
+  : >"$CONFIG"
+  if printf 'test-password\ntest-password\n' | (install_client) >/dev/null 2>&1 && [ -f "$VAULT/gocryptfs.conf" ] && [ ! -e "$RUNROOT" ]; then
+    echo "OK    install creates the vault and installs Orca"
+  else fail "install"; fi
+  out=$(printf 'test-password\n' | (vault_shell -- sh -c 'id -u; pwd; echo "links=$(ip -br link | grep -vc "^lo ")"; touch ~/marker') 2>&1)
+  case "$out" in
+    *"30100"*"/home/dev"*) echo "OK    shell as dev in the vault" ;;
+    *) fail "shell: $out" ;;
+  esac
+  case "$out" in *"links=0"*) echo "OK    shell without a network" ;; *) fail "shell network: $out" ;; esac
+  if podman unshare mountpoint -q "$OPEN" || [ -e "$RUNROOT" ]; then fail "the vault stays unlocked after the shell"
+  else echo "OK    the vault is locked after the shell"; fi
+  [ "$(printf 'test-password\n' | (vault_shell -- sh -c 'test -f ~/marker && echo kept') 2>/dev/null)" = kept ] \
+    && echo "OK    the shell writes into the vault" || fail "marker in the vault"
+  if printf 'wrong\n' | (vault_shell -- true) >/dev/null 2>&1 || podman unshare mountpoint -q "$OPEN" || [ -e "$RUNROOT" ]; then
+    fail "wrong password"
+  else echo "OK    a wrong password opens nothing and leaves nothing"; fi
+  mkdir -p "$RUNROOT"
+  if printf 'test-password\n' | (vault_shell -- true) >/dev/null 2>&1; then fail "shell while the client runs"
+  else echo "OK    no shell while the client runs"; fi
+  rmdir "$RUNROOT"
+  if (VAULT_BASE=$STORE/vault; uninstall_client) >/dev/null 2>&1; then fail "uninstall with the vault inside the store"
+  else echo "OK    uninstall refuses a vault inside the store"; fi
+  podman unshare rm -rf "$VAULT_BASE"
+  rm -f "$CONFIG"
+}
+
 run_tests() {
   url=${1:-}; ctl=""
   if [ -n "$url" ]; then
@@ -98,6 +134,7 @@ run_tests() {
   esac
   if (orca_update 1.4.241) >/dev/null 2>&1 && [ ! -e "$RUNROOT" ]; then echo "OK    orca-update of a closed client"
   else echo "FAIL  orca-update of a closed client"; FAILS=$((FAILS + 1)); fi
+  vault_tests
   echo "--- host"
   echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward) br-orca-pods=$(ip -br link | grep -c br-orca-pods || true) pasta=$(pgrep -c pasta || true)"
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }

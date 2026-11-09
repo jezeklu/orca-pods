@@ -8,7 +8,7 @@ RUN apt-get update && apt-get upgrade -y \
     && echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian trixie main" \
       > /etc/apt/sources.list.d/tailscale.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      tailscale iproute2 iptables openssh-client git jq \
+      tailscale iproute2 iptables openssh-client git jq less nano \
       libgtk-3-0t64 libnss3 libnspr4 libasound2t64 libgbm1 libdrm2 \
       libatk-bridge2.0-0t64 libatspi2.0-0t64 libcups2t64 libdbus-1-3 \
       libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
@@ -27,7 +27,7 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      gh mc htop ripgrep build-essential python3 xvfb xauth dbus-x11 procps less nano \
+      gh mc htop ripgrep build-essential python3 xvfb xauth dbus-x11 procps \
       unzip xz-utils file openssl libxss1 libxfixes3 vim bash-completion \
     && curl -fsSL --retry 5 "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/uv.tar.gz \
     && echo "$UV_SHA256  /tmp/uv.tar.gz" | sha256sum -c - \

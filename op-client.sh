@@ -2,10 +2,13 @@
 # Isolated Orca client: starts Orca in a rootless container and undoes everything when it exits.
 #
 # Usage:
+#   op-client install   check requirements, create the settings and the vault, install the latest Orca
 #   op-client           start Orca, the first start installs the latest Orca
 #   op-client login     log the running client in to Tailscale, from a second terminal
 #   op-client orca-update [version]  switch to the latest or the given Orca while the client is closed
 #   op-client status    Orca versions of the client and, while it runs, of the paired servers
+#   op-client shell [-- command]  a shell in the vault while the client is closed, asks for the password
+#   op-client uninstall remove images and Orca, keep the settings and the vault
 #   op-client cleanup   manual cleanup after a crash or kill -9
 #   op-client doctor    check requirements
 #   op-client packages  print the command that installs the packages
@@ -16,6 +19,7 @@ ROLE=client
 # @include common.sh
 . "$(dirname "$(readlink -f "$0")")/lib/common.sh"
 
+DEFAULT_VAULT_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/orca-pods/client-vault"
 VAULT_BASE="${PODS_VAULT_BASE:-}"
 [ -z "${PODS_APPIMAGE:-}" ] || echo "WARNING: PODS_APPIMAGE is no longer used, the client installs Orca releases itself: $prog orca-update" >&2
 VAULT="$VAULT_BASE/vault"
@@ -34,7 +38,7 @@ teardown() {
   trap '' INT TERM HUP PIPE
   set +e
   bad=0
-  remove_containers 0 orca-pods-client orca-pods-update orca-pods-fw || { echo "WARNING: could not remove the containers" >&2; bad=1; }
+  remove_containers 0 orca-pods-client orca-pods-update orca-pods-shell orca-pods-fw || { echo "WARNING: could not remove the containers" >&2; bad=1; }
   if pod network exists orca-pods-net 2>/dev/null; then
     pod network rm orca-pods-net >/dev/null 2>&1 || { echo "WARNING: could not remove the orca-pods-net network" >&2; bad=1; }
   fi
@@ -153,6 +157,68 @@ show_status() {
   done
 }
 
+# The password is asked for twice, once to create the vault and once to set it up.
+create_vault() {
+  mkdir -p "$VAULT" "$OPEN"
+  echo "Creating the vault $VAULT. Store the password and the master key it prints safely, without them the data is lost."
+  gocryptfs -init -q "$VAULT"
+  echo "Unlocking the new vault to set it up."
+  pod unshare gocryptfs -q -allow_other "$VAULT" "$OPEN"
+  pod unshare sh -c 'cd "$1" && mkdir home state && chown "$2:$2" home && chown 1:1 state && chmod 700 home state' \
+    sh "$OPEN" "$DEV_IN_NS"
+  pod unshare umount "$OPEN"
+}
+
+install_client() {
+  doctor gocryptfs
+  require_free
+  trap 'teardown >/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  if [ ! -f "$CONFIG" ]; then
+    mkdir -p "$(dirname "$CONFIG")"
+    printf 'PODS_VAULT_BASE="%s"\n' "$DEFAULT_VAULT_BASE" >"$CONFIG"
+    echo "Created $CONFIG."
+    VAULT_BASE=$DEFAULT_VAULT_BASE VAULT=$DEFAULT_VAULT_BASE/vault OPEN=$DEFAULT_VAULT_BASE/vault-open
+  fi
+  [ -n "$VAULT_BASE" ] || { echo "Set PODS_VAULT_BASE in $CONFIG." >&2; exit 1; }
+  if [ -f "$VAULT/gocryptfs.conf" ]; then echo "Vault $VAULT exists, kept."; else create_vault; fi
+  update_image
+  closed_client_net
+  echo "Installing the latest Orca..."
+  echo "Orca $(fetch_orca) installed. Next: $prog, then $prog login from a second terminal."
+}
+
+uninstall_client() {
+  require_free
+  case "$(readlink -m "$VAULT_BASE")/" in
+    "$(readlink -m "$STORE")"/*) echo "The vault lies inside $STORE, nothing removed. Move it first." >&2; exit 1 ;;
+  esac
+  # Images and Orca belong to mapped users.
+  pod unshare rm -rf "$STORE"
+  rm -rf "$RUNROOT"
+  echo "Images and Orca removed. Kept: the settings in $CONFIG${VAULT_BASE:+ and the vault in $VAULT}."
+}
+
+# Only while the client is closed: a running client would share the unlocked vault with the shell,
+# and a separate password prompt keeps every look into the vault deliberate.
+vault_shell() { # [-- command]
+  [ "${1:-}" != -- ] || shift
+  [ -n "$VAULT_BASE" ] || { echo "Set PODS_VAULT_BASE in $CONFIG." >&2; exit 1; }
+  [ -f "$VAULT/gocryptfs.conf" ] || { echo "Vault $VAULT does not exist, run: $prog install" >&2; exit 1; }
+  [ ! -e "$RUNROOT" ] || { echo "The client is running or left state behind. Close it first, the shell needs the vault to itself." >&2; exit 1; }
+  trap 'teardown >/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  pod image exists orca-pods || { echo "Image orca-pods is missing, run: $prog install" >&2; exit 1; }
+  pod unshare gocryptfs -q -allow_other "$VAULT" "$OPEN"
+  tty=-i
+  [ ! -t 0 ] || [ ! -t 1 ] || tty=-it
+  [ "$#" -gt 0 ] || set -- bash -l
+  pod run --rm "$tty" --name orca-pods-shell --hostname orca-pods-shell --network none \
+    --uidmap 0:1:65536 --gidmap 0:1:65536 --user dev --workdir /home/dev --cap-drop=all \
+    --security-opt no-new-privileges --security-opt label=disable --read-only --tmpfs /tmp \
+    --mount "type=bind,src=$OPEN/home,dst=/home/dev" orca-pods "$@"
+}
+
 tailscale_state() {
   pod exec orca-pods-client tailscale status --json 2>/dev/null \
     | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p'
@@ -214,11 +280,14 @@ main() {
   prepare_store
   case "${1:-}" in
     "") run_client ;;
+    install) install_client ;;
+    uninstall) uninstall_client ;;
+    shell) shift; vault_shell "$@" ;;
     login) tailscale_login ;;
     orca-update) shift; orca_update "$@" ;;
     status) show_status ;;
     cleanup) teardown ;;
-    *) echo "Usage: $prog [login|status|orca-update|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [install|login|status|orca-update|shell|uninstall|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 
