@@ -2,9 +2,10 @@
 # Orca releases for both roles, used inside the container only.
 #   orca-release version [version]        print the latest version, or check that the given one exists
 #   orca-release install DIR [version]    verify and extract into DIR/<version> unless it is there, print the version
+#   orca-release switch DIR [version]     install, point DIR/current at it, keep only it and the previous one
 set -euo pipefail
 REPO=https://github.com/stablyai/orca/releases
-usage() { echo "Usage: orca-release version [version] | orca-release install DIR [version]" >&2; exit 1; }
+usage() { echo "Usage: orca-release version [version] | orca-release install|switch DIR [version]" >&2; exit 1; }
 # Versions become folder names and URLs, from the user and from the network alike.
 valid() { [[ $1 =~ ^[0-9]+(\.[0-9]+)*$ ]]; }
 
@@ -44,6 +45,19 @@ case "${1:-}" in
       mv "$work/squashfs-root" "$dir/$version"
     fi
     echo "$version"
+    ;;
+  switch)
+    dir=${2:-}
+    [ -n "$dir" ] || usage
+    new=$("$0" install "$dir" "${3:-}")
+    previous=$(readlink "$dir/current" 2>/dev/null || true)
+    ln -sfn "$new" "$dir/.current"
+    mv -T "$dir/.current" "$dir/current"
+    for old in "$dir"/[0-9]*; do
+      name=${old##*/}
+      [ "$name" = "$new" ] || [ "$name" = "$previous" ] || rm -rf "$old"
+    done
+    echo "$new"
     ;;
   *) usage ;;
 esac

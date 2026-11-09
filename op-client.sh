@@ -2,8 +2,9 @@
 # Isolated Orca client: starts Orca in a rootless container and undoes everything when it exits.
 #
 # Usage:
-#   op-client           start Orca
+#   op-client           start Orca, the first start installs the latest Orca
 #   op-client login     log the running client in to Tailscale, from a second terminal
+#   op-client orca-update [version]  switch to the latest or the given Orca while the client is closed
 #   op-client cleanup   manual cleanup after a crash or kill -9
 #   op-client doctor    check requirements
 #   op-client packages  print the command that installs the packages
@@ -15,10 +16,11 @@ ROLE=client
 . "$(dirname "$(readlink -f "$0")")/lib/common.sh"
 
 VAULT_BASE="${PODS_VAULT_BASE:-}"
-APPIMAGE="${PODS_APPIMAGE:-}"
+[ -z "${PODS_APPIMAGE:-}" ] || echo "WARNING: PODS_APPIMAGE is no longer used, the client installs Orca releases itself: $prog orca-update" >&2
 VAULT="$VAULT_BASE/vault"
 OPEN="$VAULT_BASE/vault-open"
-APPDIR="$STORE/app"
+# Orca versions, written only by dev in a short container, mounted read-only into the client.
+ORCA_DIR="$STORE/orca"
 SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY:-wayland-0}"
 
 require_free() {
@@ -31,7 +33,7 @@ teardown() {
   trap '' INT TERM HUP PIPE
   set +e
   bad=0
-  remove_containers 0 orca-pods-client orca-pods-fw || { echo "WARNING: could not remove the containers" >&2; bad=1; }
+  remove_containers 0 orca-pods-client orca-pods-update orca-pods-fw || { echo "WARNING: could not remove the containers" >&2; bad=1; }
   if pod network exists orca-pods-net 2>/dev/null; then
     pod network rm orca-pods-net >/dev/null 2>&1 || { echo "WARNING: could not remove the orca-pods-net network" >&2; bad=1; }
   fi
@@ -41,7 +43,7 @@ teardown() {
   if [ -d "$OPEN" ] && pod unshare mountpoint -q "$OPEN"; then
     pod unshare umount "$OPEN" || { echo "WARNING: could not unmount the vault" >&2; bad=1; }
   fi
-  rm -rf "$APPDIR" "$RUNROOT"
+  rm -rf "$RUNROOT"
   sleep 1
   if ip -br link | grep -q br-orca-pods; then echo "WARNING: interface br-orca-pods is still present" >&2; bad=1; fi
   if [ "$bad" -eq 0 ]; then echo "Host restored."; else echo "Cleanup incomplete, see the warnings above." >&2; fi
@@ -59,12 +61,37 @@ start_client() {
 
 check_requirements() {
   [ -n "$VAULT_BASE" ] || { echo "Set PODS_VAULT_BASE in $CONFIG." >&2; exit 1; }
-  [ -n "$APPIMAGE" ] || { echo "Set PODS_APPIMAGE in $CONFIG." >&2; exit 1; }
   doctor gocryptfs >/dev/null || { doctor gocryptfs >&2 || true; exit 1; }
   [ -f "$VAULT/gocryptfs.conf" ] || { echo "Vault $VAULT does not exist, see README." >&2; exit 1; }
   [ -d "$OPEN" ] || { echo "Directory $OPEN is missing, see README." >&2; exit 1; }
-  [ -x "$APPIMAGE" ] || { echo "$APPIMAGE is missing." >&2; exit 1; }
   [ -S "$SOCK" ] || { echo "Wayland socket $SOCK is missing." >&2; exit 1; }
+}
+
+# Downloads and extracts in the container behind the firewall, the host never runs the AppImage.
+# Needs the network from net_up.
+fetch_orca() { # [version]
+  mkdir -p "$ORCA_DIR"
+  pod unshare chown "$DEV_IN_NS:$DEV_IN_NS" "$ORCA_DIR"
+  pod run --rm --name orca-pods-update --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 \
+    --uidmap 0:1:65536 --gidmap 0:1:65536 --user dev --cap-drop=all \
+    --security-opt no-new-privileges --security-opt label=disable --read-only --tmpfs /tmp \
+    --mount "type=bind,src=$ORCA_DIR,dst=/orca" orca-pods orca-release switch /orca ${1:+"$1"}
+}
+
+orca_update() { # [version]
+  case "${1:-}" in
+    *[!0-9.]*|.*|*.|*..*) echo "Usage: $prog orca-update [version such as 1.4.255]" >&2; exit 1 ;;
+  esac
+  require_free
+  trap 'teardown >/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  update_image
+  pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; exit 1; }
+  net_up
+  firewall_rules | load_fw
+  echo "Installing Orca ${1:-latest}..."
+  version=$(fetch_orca "$@")
+  echo "Orca $version installed, the client uses it at the next start."
 }
 
 tailscale_state() {
@@ -81,16 +108,16 @@ run_client() {
   update_image
   pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; exit 1; }
 
-  rm -rf "$APPDIR"
-  mkdir -p "$APPDIR"
-  (cd "$APPDIR" && "$APPIMAGE" --appimage-extract >/dev/null)
+  net_up
+  firewall_rules | load_fw
+  if [ ! -e "$ORCA_DIR/current" ]; then
+    echo "Installing the latest Orca, the first start takes a few minutes..."
+    fetch_orca >/dev/null
+  fi
 
   pod unshare gocryptfs -q -allow_other "$VAULT" "$OPEN"
   pod unshare test -d "$OPEN/home" || { echo "The vault has no home directory, see README." >&2; exit 1; }
   pod unshare test -d "$OPEN/state" || { echo "The vault has no state directory, see README." >&2; exit 1; }
-
-  net_up
-  firewall_rules | load_fw
 
   mkdir -p "$RUNROOT"
   getfacl -cp "$SOCK" >"$RUNROOT/wayland.acl"
@@ -99,7 +126,7 @@ run_client() {
   start_client -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=/wayland/wayland-0 \
     --mount "type=bind,src=$OPEN/home,dst=/home/dev" \
     --mount "type=bind,src=$OPEN/state,dst=/state" \
-    --mount "type=bind,src=$APPDIR/squashfs-root,dst=/opt/orca,readonly" \
+    --mount "type=bind,src=$(readlink -f "$ORCA_DIR/current"),dst=/opt/orca,readonly" \
     --mount "type=bind,src=$SOCK,dst=/wayland/wayland-0"
 
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -129,8 +156,9 @@ main() {
   case "${1:-}" in
     "") run_client ;;
     login) tailscale_login ;;
+    orca-update) shift; orca_update "$@" ;;
     cleanup) teardown ;;
-    *) echo "Usage: $prog [login|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [login|orca-update|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 

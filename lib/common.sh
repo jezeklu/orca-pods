@@ -55,6 +55,9 @@ prepare_store() {
 # where the host policy would refuse to execute it, and relabelling needs root. Isolation comes from
 # the user namespace, seccomp, dropped capabilities and the firewall.
 
+# dev in a user namespace of the store: container UID n is n + 1, see --uidmap.
+DEV_IN_NS=30101
+
 # dev (UID 30100 in the container, see --uidmap) as seen by the host.
 dev_host_uid() {
   start=$(awk -F: -v u="$(id -un)" '$1 == u { print $2 }' /etc/subuid)

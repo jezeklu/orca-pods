@@ -16,7 +16,7 @@ Two roles, one standalone script each:
 - **`op-client`:** a separate Orca instance in a rootless container that talks to the server only over Tailscale. It shares no state with the host or with a native Orca installation.
 - **`op-server`:** a headless Orca in a rootless container with your projects, coding agents and Tailscale. The host passes in only what you choose and never executes anything the container wrote. The image is built for Node.js projects, other languages come through mise, see [Node and other runtimes](#node-and-other-runtimes).
 
-> orca-pods is an independent project. It is not affiliated with or endorsed by the Orca authors and does not redistribute Orca: the client runs your own AppImage, the server downloads official releases and verifies their checksums.
+> orca-pods is an independent project. It is not affiliated with or endorsed by the Orca authors and does not redistribute Orca: both roles download official releases and verify their checksums.
 
 ```text
 Host
@@ -64,7 +64,7 @@ op-server login         # Tailscale
 op-server pair          # pairing codes for the client
 ```
 
-Client, on a desktop with Wayland and the Orca AppImage:
+Client, on a desktop with Wayland:
 
 ```bash
 curl -fsSL -o ~/.local/bin/op-client https://github.com/jezeklu/orca-pods/releases/latest/download/op-client
@@ -73,11 +73,11 @@ op-client packages     # install what it prints, then
 op-client doctor
 ```
 
-Then set `PODS_APPIMAGE` and `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `op-client`.
+Then set `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `op-client`.
 
 ## Requirements
 
-Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podman 5.0 or newer. The client also needs Wayland and Orca as an AppImage. Ubuntu 24.04 ships Podman 4.9 and is not supported.
+Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podman 5.0 or newer. The client also needs Wayland. Ubuntu 24.04 ships Podman 4.9 and is not supported.
 
 `op-client packages` and `op-server packages` print the install command for your distribution, `doctor` checks that everything is in place. Nothing is installed outside the package manager and nothing needs root at runtime.
 
@@ -103,7 +103,7 @@ This is the whole interface between the host and each container. Nothing else fr
 |---|---|---|
 | `/home/dev` | `$PODS_VAULT_BASE/vault-open/home`: the unlocked gocryptfs vault | Read-write |
 | `/state` | `$PODS_VAULT_BASE/vault-open/state`: Tailscale state in the vault | Read-write |
-| `/opt/orca` | The AppImage from `PODS_APPIMAGE`, extracted into `~/.local/share/orca-pods/client/app` | Read-only |
+| `/opt/orca` | The current Orca release in `~/.local/share/orca-pods/client/orca`, which only a short update container writes | Read-only |
 | `/wayland/wayland-0` | The Wayland socket of your session, with an ACL for the container user only | Read-write, a deliberate hole: the clipboard is shared |
 | `/dev/net/tun` | The TUN device, for Tailscale | Device |
 | Environment | Only `XDG_RUNTIME_DIR=/tmp` and `WAYLAND_DISPLAY` | |
@@ -143,7 +143,16 @@ op-client login      # from a second terminal, first run only: Tailscale login
 op-client cleanup    # only after a crash or kill -9
 ```
 
-Keep the terminal open. Every start pulls the newest image and removes the old one, offline starts use the last image. Images and state live in `~/.local/share/orca-pods/client`, no container survives the exit. A new Orca version is picked up from `PODS_APPIMAGE` at the next start.
+Keep the terminal open. Every start pulls the newest image and removes the old one, offline starts use the last image. Images, state and Orca live in `~/.local/share/orca-pods/client`, no container survives the exit.
+
+The client has its own Orca, independent of any Orca installed on the host, so it can stay on the version the server runs. The first start installs the latest release. Later versions come only on request, with the client closed:
+
+```bash
+op-client orca-update            # the latest release
+op-client orca-update 1.4.255    # a given version, also the way back
+```
+
+A short container behind the same firewall downloads the release, checks its SHA-512 and extracts it, the host never runs the AppImage. The current and the previous version stay on disk. Orca's own update prompt cannot apply inside the container, use `orca-update` instead.
 
 The vault is mounted only inside Podman's user namespace, so ordinary host processes see `vault-open/` empty. While the client runs, the content is visible with:
 
@@ -170,7 +179,7 @@ Protected:
 
 Not protected:
 
-- **Processes running as the host user.** They can use `podman exec`, `podman unshare` or replace the AppImage and reach the running client and its pairing token. The container stops accidental reads, not a targeted attack from your own account. Revoke the token if in doubt.
+- **Processes running as the host user.** They can use `podman exec` or `podman unshare` and reach the running client and its pairing token. The container stops accidental reads, not a targeted attack from your own account. Revoke the token if in doubt.
 - Root on the host and kernel vulnerabilities: a container is not a VM.
 - Wayland: the clipboard is shared and the socket is a deliberate hole. `label=disable` turns SELinux off for the container.
 - The Chromium sandbox is off (`--no-sandbox`), the container is the boundary for the built-in browser.

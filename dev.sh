@@ -56,6 +56,21 @@ run_tests() {
   if pod exec orca-pods-client sh -c 'ip -br link | grep -q tailscale0'; then echo "OK    tailscale0 exists"; else echo "FAIL  tailscale0 missing"; FAILS=$((FAILS + 1)); fi
   [ "$(pod exec orca-pods-client id -u dev)" = 30100 ] && echo "OK    dev has UID 30100" || { echo "FAIL  dev UID"; FAILS=$((FAILS + 1)); }
 
+  echo "--- Orca releases, kept in .local for the next run"
+  [ "$(fetch_orca 1.4.241 2>/dev/null)" = 1.4.241 ] && echo "OK    Orca 1.4.241 installed in the container" || { echo "FAIL  Orca install"; FAILS=$((FAILS + 1)); }
+  pod unshare sh -c 'cd "$1" && mkdir -p 0.0.1 0.0.2 && ln -sfn 0.0.2 current && chown -h 30101:30101 0.0.1 0.0.2 current' sh "$ORCA_DIR"
+  fetch_orca 1.4.241 >/dev/null 2>&1
+  if [ "$(readlink "$ORCA_DIR/current")" = 1.4.241 ] && [ -d "$ORCA_DIR/0.0.2" ] && [ ! -e "$ORCA_DIR/0.0.1" ]; then
+    echo "OK    switch keeps only the previous version"
+  else echo "FAIL  switch"; FAILS=$((FAILS + 1)); fi
+  if [ -x "$ORCA_DIR/current/AppRun" ] && ! touch "$ORCA_DIR/x" "$ORCA_DIR/current/x" 2>/dev/null; then
+    echo "OK    the host reads Orca and cannot change it"
+  else echo "FAIL  Orca ownership"; FAILS=$((FAILS + 1)); fi
+  if fetch_orca 0.0.3 >/dev/null 2>&1 || [ "$(readlink "$ORCA_DIR/current")" != 1.4.241 ]; then
+    echo "FAIL  a nonexistent version"; FAILS=$((FAILS + 1))
+  else echo "OK    a nonexistent version changed nothing"; fi
+  pod unshare rm -rf "$ORCA_DIR/0.0.2"
+
   echo "--- positive check: firewall off for a moment, test container without data only"
   pod unshare --rootless-netns nft delete table inet orca_pods
   check "no fw: http example.com" pass http://example.com

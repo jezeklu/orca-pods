@@ -41,8 +41,6 @@ MEMORY="${PODS_MEMORY:-10g}"
 HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
 UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-pods-$INSTANCE.service"
-# In a user namespace of the store: container UID n is n + 1, see --uidmap.
-DEV_IN_NS=30101
 
 running() {
   [ "$(pod container inspect --format '{{.State.Running}}' orca-pods-server 2>/dev/null)" = true ]
