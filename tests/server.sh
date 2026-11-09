@@ -53,6 +53,8 @@ printf 'token-default\n' >"$sec/github/default.token"
 PODS_SECRETS_DIR=$sec PODS_RUNTIMES=node@24
 export PODS_SECRETS_DIR PODS_RUNTIMES
 trap './orca-server.sh stop >/dev/null 2>&1 || true' EXIT
+# A first start, the checks of a fresh home must not see what an earlier run left.
+pod unshare rm -rf "$STORE/home" "$STORE/state"
 ./orca-server.sh start
 pod exec --user dev orca-server orca-update 1.4.241
 pod exec -i --user dev orca-server bash < tests/server-inside.sh
