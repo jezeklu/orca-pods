@@ -1,5 +1,5 @@
 # shellcheck shell=sh
-# Shared by orca-client and orca-server. The caller sets ROLE before this file is loaded.
+# Shared by op-client and op-server. The caller sets ROLE before this file is loaded.
 
 set -eu
 
@@ -68,7 +68,7 @@ destroy table inet orca_pods
 table inet orca_pods {
   chain forward {
     type filter hook forward priority filter - 10; policy accept;
-    iifname != "br-orca" return
+    iifname != "br-orca-pods" return
     meta nfproto ipv6 drop
     ip daddr {
       0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16,
@@ -81,7 +81,7 @@ table inet orca_pods {
   }
   chain input {
     type filter hook input priority filter - 10; policy accept;
-    iifname "br-orca" drop
+    iifname "br-orca-pods" drop
   }
 }
 NFT
@@ -89,8 +89,8 @@ NFT
 
 # Holds the rootless network namespace open, so the firewall exists before the workload starts.
 net_up() {
-  pod network exists orca-net || pod network create --disable-dns --interface-name br-orca orca-net >/dev/null
-  pod run -d --rm --name orca-fw --network orca-net --read-only --cap-drop=all \
+  pod network exists orca-pods-net || pod network create --disable-dns --interface-name br-orca-pods orca-pods-net >/dev/null
+  pod run -d --rm --name orca-pods-fw --network orca-pods-net --read-only --cap-drop=all \
     --security-opt no-new-privileges --security-opt label=disable orca-pods sleep infinity >/dev/null
 }
 

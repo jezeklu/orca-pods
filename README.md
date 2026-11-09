@@ -13,8 +13,8 @@ Isolated Orca ADE pods: GUI client and headless server in hardened containers, c
 
 Two roles, one standalone script each:
 
-- **`orca-client`:** a separate Orca instance in a rootless container that talks to the server only over Tailscale. It shares no state with the host or with a native Orca installation.
-- **`orca-server`:** a headless Orca in a rootless container with your projects, coding agents and Tailscale. The host passes in only what you choose and never executes anything the container wrote. The image is built for Node.js projects, other languages come through mise, see [Node and other runtimes](#node-and-other-runtimes).
+- **`op-client`:** a separate Orca instance in a rootless container that talks to the server only over Tailscale. It shares no state with the host or with a native Orca installation.
+- **`op-server`:** a headless Orca in a rootless container with your projects, coding agents and Tailscale. The host passes in only what you choose and never executes anything the container wrote. The image is built for Node.js projects, other languages come through mise, see [Node and other runtimes](#node-and-other-runtimes).
 
 > orca-pods is an independent project. It is not affiliated with or endorsed by the Orca authors and does not redistribute Orca: the client runs your own AppImage, the server downloads official releases and verifies their checksums.
 
@@ -27,7 +27,7 @@ Host
       ├── home (projects, agent logins)             │
       └── state (tailscaled)                        │
                                                     ▼
-Rootless network namespace + firewall ── orca-server container
+Rootless network namespace + firewall ── orca-pods-server container
                                            ├── orca-ide serve :6768
                                            ├── tailscaled ── tailnet ── remote client, phone
                                            └── outbound TCP 443 and UDP only, no LAN, no host
@@ -48,38 +48,38 @@ Rootless network namespace + firewall ── orca-server container
 
 Apply the [Tailscale policy](#tailscale-policy) first, then pick a role. `packages` prints the install command for your distribution, `doctor` checks the host.
 
-Server, on the machine that keeps your projects. Settings must be in place **before** `orca-server install`: the defaults work without a settings file, anything else such as your own secrets folder or optional tools goes into `~/.config/orca-pods/server.env` first, see [Configuration](#configuration).
+Server, on the machine that keeps your projects. Settings must be in place **before** `op-server install`: the defaults work without a settings file, anything else such as your own secrets folder or optional tools goes into `~/.config/orca-pods/server.env` first, see [Configuration](#configuration).
 
 ```bash
-curl -fsSL -o ~/.local/bin/orca-server https://github.com/jezeklu/orca-pods/releases/latest/download/orca-server
-chmod +x ~/.local/bin/orca-server
-orca-server packages    # install what it prints, then
-orca-server doctor
+curl -fsSL -o ~/.local/bin/op-server https://github.com/jezeklu/orca-pods/releases/latest/download/op-server
+chmod +x ~/.local/bin/op-server
+op-server packages      # install what it prints, then
+op-server doctor
 # optional, before install: settings, see Configuration
 #   mkdir -p ~/.config/orca-pods
 #   curl -fsSL -o ~/.config/orca-pods/server.env https://raw.githubusercontent.com/jezeklu/orca-pods/main/server.env.example
 #   then edit PODS_SECRETS_DIR, PODS_TOOLS, …
-orca-server install     # image, Orca, start at boot
-orca-server login       # Tailscale
-orca-server pair        # pairing codes for the client
+op-server install       # image, Orca, start at boot
+op-server login         # Tailscale
+op-server pair          # pairing codes for the client
 ```
 
 Client, on a desktop with Wayland and the Orca AppImage:
 
 ```bash
-curl -fsSL -o ~/.local/bin/orca-client https://github.com/jezeklu/orca-pods/releases/latest/download/orca-client
-chmod +x ~/.local/bin/orca-client
-orca-client packages   # install what it prints, then
-orca-client doctor
+curl -fsSL -o ~/.local/bin/op-client https://github.com/jezeklu/orca-pods/releases/latest/download/op-client
+chmod +x ~/.local/bin/op-client
+op-client packages     # install what it prints, then
+op-client doctor
 ```
 
-Then set `PODS_APPIMAGE` and `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `orca-client`.
+Then set `PODS_APPIMAGE` and `PODS_VAULT_BASE` in `~/.config/orca-pods/client.env`, create the vault as described in [First run](#first-run) and start `op-client`.
 
 ## Requirements
 
 Supported hosts are Arch, Fedora, Debian 13 and Ubuntu 26.04 with rootless Podman 5.0 or newer. The client also needs Wayland and Orca as an AppImage. Ubuntu 24.04 ships Podman 4.9 and is not supported.
 
-`orca-client packages` and `orca-server packages` print the install command for your distribution, `doctor` checks that everything is in place. Nothing is installed outside the package manager and nothing needs root at runtime.
+`op-client packages` and `op-server packages` print the install command for your distribution, `doctor` checks that everything is in place. Nothing is installed outside the package manager and nothing needs root at runtime.
 
 ## What the containers get from the host
 
@@ -121,7 +121,7 @@ From your own home directory only three things reach a container: `~/.gitconfig`
 
 ### First run
 
-Download `orca-client` from the [latest release](https://github.com/jezeklu/orca-pods/releases/latest) into `~/.local/bin`, or build it from a checkout: `./build.sh` writes the standalone files `dist/orca-client` and `dist/orca-server`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
+Download `op-client` from the [latest release](https://github.com/jezeklu/orca-pods/releases/latest) into `~/.local/bin`, or build it from a checkout: `./build.sh` writes the standalone files `dist/op-client` and `dist/op-server`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
 
 Create the vault once. Store the password and the master key safely, without them the data is lost. `PODS_VAULT_BASE` is the directory from `client.env`.
 
@@ -138,9 +138,9 @@ podman unshare umount "$PWD/vault-open"
 ### Daily use
 
 ```bash
-orca-client          # pulls a new image, unlocks the vault, starts Orca, restores everything on exit
-orca-client login    # from a second terminal, first run only: Tailscale login
-orca-client cleanup  # only after a crash or kill -9
+op-client            # pulls a new image, unlocks the vault, starts Orca, restores everything on exit
+op-client login      # from a second terminal, first run only: Tailscale login
+op-client cleanup    # only after a crash or kill -9
 ```
 
 Keep the terminal open. Every start pulls the newest image and removes the old one, offline starts use the last image. Images and state live in `~/.local/share/orca-pods/client`, no container survives the exit. A new Orca version is picked up from `PODS_APPIMAGE` at the next start.
@@ -177,7 +177,7 @@ Not protected:
 - Credentials in the profile are stored unencrypted and protected only by the vault, which stays unlocked while the client runs.
 - Internet: TCP 443 and UDP are allowed, so data can leave. The firewall cannot tell public addresses routed through a VPN apart.
 
-After `kill -9` of the script the client keeps running and the vault stays unlocked, run `orca-client cleanup`.
+After `kill -9` of the script the client keeps running and the vault stays unlocked, run `op-client cleanup`.
 
 ## Tailscale policy
 
@@ -185,28 +185,28 @@ Paste `acl.hujson` into the Tailscale admin console before the first login. It r
 
 ## Server
 
-The host needs rootless Podman, `nft`, `acl` and `pasta`, `orca-server packages` prints the command.
+The host needs rootless Podman, `nft`, `acl` and `pasta`, `op-server packages` prints the command.
 
 ```bash
-curl -fsSL -o ~/.local/bin/orca-server https://github.com/jezeklu/orca-pods/releases/latest/download/orca-server
-chmod +x ~/.local/bin/orca-server
-orca-server install    # image, Orca, start at boot, no root
-orca-server login      # Tailscale with tag:orca-server
-orca-server pair       # pairing codes for 127.0.0.1 and for the tailnet
+curl -fsSL -o ~/.local/bin/op-server https://github.com/jezeklu/orca-pods/releases/latest/download/op-server
+chmod +x ~/.local/bin/op-server
+op-server install      # image, Orca, start at boot, no root
+op-server login        # Tailscale with tag:orca-server
+op-server pair         # pairing codes for 127.0.0.1 and for the tailnet
 ```
 
 A local Orca on the same host pairs with the `127.0.0.1` code. Orca warns that the link points back to this device; turn on its option for an SSH tunnel, because the port is forwarded into the container in the same way. Remote clients and phones use the tailnet code.
 
-`orca-server status` lists the paired devices with their id, when they were last seen and how they connected: via the host port (the local Orca) or via Tailscale. Orca names every device `CLI <date>` and keeps no address or host name, so give each a name after pairing:
+`op-server status` lists the paired devices with their id, when they were last seen and how they connected: via the host port (the local Orca) or via Tailscale. Orca names every device `CLI <date>` and keeps no address or host name, so give each a name after pairing:
 
 ```sh
-orca-server rename 1a2b laptop     # id or its first characters, from status
-orca-server unpair 1a2b            # revoke it, its pairing code stops working
+op-server rename 1a2b laptop     # id or its first characters, from status
+op-server unpair 1a2b            # revoke it, its pairing code stops working
 ```
 
 Both restart Orca for a moment, open terminals in the container keep running.
 
-`orca-server` without arguments lists all commands, `orca-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
+`op-server` without arguments lists all commands, `op-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
 
 ### Configuration
 
@@ -217,7 +217,7 @@ mkdir -p ~/.config/orca-pods
 curl -fsSL -o ~/.config/orca-pods/server.env https://raw.githubusercontent.com/jezeklu/orca-pods/main/server.env.example
 ```
 
-Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later changes apply at the next start: `orca-server stop && orca-server start`.
+Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later changes apply at the next start: `op-server stop && op-server start`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -236,7 +236,7 @@ Besides `PODS_SECRETS_DIR`, the container gets only `~/.gitconfig` from the host
 
 ```bash
 printf 'PODS_INSTANCE=work\nPODS_PORT=6770\nPODS_SECRETS_DIR="%s"\n' "$HOME/.local/share/orca-pods/secrets-work" >~/.config/orca-pods/work.env
-PODS_CONFIG=~/.config/orca-pods/work.env orca-server install
+PODS_CONFIG=~/.config/orca-pods/work.env op-server install
 ```
 
 ### What `install` touches
@@ -248,7 +248,7 @@ PODS_CONFIG=~/.config/orca-pods/work.env orca-server install
 | Instance data and image | `~/.local/share/orca-pods/<instance>/` | No |
 | Secrets | `$PODS_SECRETS_DIR` with an ACL for the container user | No |
 | Orca | Latest release into `/home/dev/.local/share/orca-server` | No |
-| Start at boot | `~/.config/systemd/user/orca-<instance>.service`, linger | No |
+| Start at boot | `~/.config/systemd/user/orca-pods-<instance>.service`, linger | No |
 
 Nothing goes into `/usr` or `/etc`.
 
@@ -285,7 +285,7 @@ Each agent logs in separately inside the container:
 
 Claude Code, Codex and OpenCode come with the image. `agy` is not on npm and updates itself, so it is optional: set `PODS_TOOLS="agy"` and it is installed at the next start into `/home/dev/.local/bin/agy`, inside the container only. The installer comes from Google and checks a SHA-512 from the same server, which guards against broken downloads, not against a compromised source.
 
-`PODS_TOOLS="openspec"` installs the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI from npm into `/home/dev/.local`, `orca-server update` updates it. Its skills and commands belong to the project: `openspec init` writes them into the repository, so they arrive with the clone.
+`PODS_TOOLS="openspec"` installs the [OpenSpec](https://github.com/Fission-AI/OpenSpec) CLI from npm into `/home/dev/.local`, `op-server update` updates it. Its skills and commands belong to the project: `openspec init` writes them into the repository, so they arrive with the clone.
 
 ### Skills
 
@@ -325,7 +325,7 @@ The server image is made for Node.js projects. It ships the current Node release
 
 [mise](https://mise.jdx.dev) picks the versions on every `cd`: `.nvmrc`, `.node-version`, `.tool-versions` or `mise.toml`, also from a parent folder. A folder without them gets the image Node. Shells without the mise hook, such as the commands of coding agents, get the same versions through the mise shims on the `PATH`. The image Node is linked into mise, so a project asking for its major downloads nothing.
 
-Other versions and languages live in `/home/dev/.local/share/mise` and survive a new image. `PODS_RUNTIMES="node@24 python@3.13"` installs them at the next start and `orca-server update` moves them to their newest release. A project that asks for something missing gets it on the first command, or run `mise install` in its folder. mise never stops a shell at a question: project configuration under `/home/dev` is trusted, because projects in the container run their own code anyway. Languages that compile from source, such as Ruby, may need build libraries from the `Dockerfile`.
+Other versions and languages live in `/home/dev/.local/share/mise` and survive a new image. `PODS_RUNTIMES="node@24 python@3.13"` installs them at the next start and `op-server update` moves them to their newest release. A project that asks for something missing gets it on the first command, or run `mise install` in its folder. mise never stops a shell at a question: project configuration under `/home/dev` is trusted, because projects in the container run their own code anyway. Languages that compile from source, such as Ruby, may need build libraries from the `Dockerfile`.
 
 `npm install -g --prefix ~/.local <package>` and `uv tool install <package>` put tools into `/home/dev/.local/bin`. The system is read-only and there is no `sudo`, so a package from the distribution goes into the `Dockerfile` and comes with the next image. Forks set their own image with `PODS_IMAGE`.
 
@@ -335,9 +335,9 @@ Other versions and languages live in `/home/dev/.local/share/mise` and survive a
 |---|---|---|
 | Orca | Whenever you want | `orca-update` in a container terminal, terminals keep running |
 | Orca rollback | After a bad version | `orca-update <version>`, the previous version stays on disk |
-| Image | At boot, when newer | `orca-server start`, or pull ahead with `orca-server update` |
-| `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `orca-server update` on a running server with the current image. After a new image it asks for a restart first |
-| Host script | When you release it | `orca-server self-update`, changes nothing without a valid signature |
+| Image | At boot, when newer | `op-server start`, or pull ahead with `op-server update` |
+| `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `op-server update` on a running server with the current image. After a new image it asks for a restart first |
+| Host script | When you release it | `op-server self-update`, changes nothing without a valid signature |
 
 ### Data lifetime
 
@@ -355,7 +355,7 @@ Other versions and languages live in `/home/dev/.local/share/mise` and survive a
 
 ### Release signing
 
-On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/orca-server`, `dist/orca-server.sig` and `dist/orca-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers` as `orca-pods ssh-ed25519 …`. The container never sees this file, so code written in the container cannot reach the host unsigned.
+On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/op-server`, `dist/op-server.sig` and `dist/op-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers` as `orca-pods ssh-ed25519 …`. The container never sees this file, so code written in the container cannot reach the host unsigned.
 
 ### Server security boundary
 
@@ -369,7 +369,7 @@ On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and 
 
 ## Development
 
-`dev.sh` reuses `orca-client.sh` with an image built locally in `.local/` and paths from `client.env` (see `client.env.example`, ignored by git).
+`dev.sh` reuses `op-client.sh` with an image built locally in `.local/` and paths from `client.env` (see `client.env.example`, ignored by git).
 
 ```bash
 ./dev.sh build

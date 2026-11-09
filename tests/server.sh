@@ -41,7 +41,7 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   node --version; pnpm --version; uv --version; mise --version
   su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/home/dev/.local/share/mise/shims:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
-./orca-server.sh test
+./op-server.sh test
 fi
 
 # Real Orca: install, update with a live terminal, pairing, tools, crash and return.
@@ -52,15 +52,15 @@ printf 'token-org\n' >"$sec/github/example-org.token"
 printf 'token-default\n' >"$sec/github/default.token"
 PODS_SECRETS_DIR=$sec PODS_RUNTIMES=node@24
 export PODS_SECRETS_DIR PODS_RUNTIMES
-trap './orca-server.sh stop >/dev/null 2>&1 || true' EXIT
+trap './op-server.sh stop >/dev/null 2>&1 || true' EXIT
 # A first start, the checks of a fresh home must not see what an earlier run left.
 pod unshare rm -rf "$STORE/home" "$STORE/state"
-./orca-server.sh start
-pod exec --user dev orca-server orca-update 1.4.241
-pod exec -i --user dev orca-server bash < tests/server-inside.sh
-./orca-server.sh pair | awk 'NR==1{print "pair: " $0} NR==2{print "pair: code " substr($0,1,17) "..."}'
+./op-server.sh start
+pod exec --user dev orca-pods-server orca-update 1.4.241
+pod exec -i --user dev orca-pods-server bash < tests/server-inside.sh
+./op-server.sh pair | awk 'NR==1{print "pair: " $0} NR==2{print "pair: code " substr($0,1,17) "..."}'
 # The rewritten code has to work, and a forged one must not.
-pod exec -i --user dev orca-server bash <<'SH'
+pod exec -i --user dev orca-pods-server bash <<'SH'
 code=$(orca-pair ws://127.0.0.1:6768 | tail -n 1)
 for _ in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q '"state": "ready"' && break; sleep 2; done
 ORCA_PAIRING_CODE=$code orca-ide status --json | jq -e '.ok and .result.target.kind == "environment"' >/dev/null || { echo "FAIL  rewritten code"; exit 1; }
@@ -88,24 +88,24 @@ echo "OK    restarts add no pairing codes"
 orca-devices remove "zzzz" >/dev/null 2>&1 && { echo "FAIL  invalid id accepted"; exit 1; }
 echo "OK    invalid device id rejected"
 SH
-./orca-server.sh status
+./op-server.sh status
 
 echo "--- the server does not start without a firewall"
-./orca-server.sh stop >/dev/null
-if PODS_SOURCED=1 sh -c '. ./orca-server.sh; firewall_rules() { echo broken; }; prepare_store; start_server' >/dev/null 2>&1; then
+./op-server.sh stop >/dev/null
+if PODS_SOURCED=1 sh -c '. ./op-server.sh; firewall_rules() { echo broken; }; prepare_store; start_server' >/dev/null 2>&1; then
   echo "FAIL  the server started with a broken firewall"; exit 1
 fi
-if pod container exists orca-server; then echo "FAIL  the container was created"; exit 1; fi
+if pod container exists orca-pods-server; then echo "FAIL  the container was created"; exit 1; fi
 echo "OK    no container with a broken firewall"
-./orca-server.sh start
+./op-server.sh start
 
 echo "--- crash and recovery"
-pod kill orca-server >/dev/null
+pod kill orca-pods-server >/dev/null
 sleep 1
-./orca-server.sh start
-pod exec --user dev orca-server sh -c 'for i in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q "\"state\": \"ready\"" && break; sleep 2; done; orca-ide status --json | jq -r .result.runtime.appVersion; test -d "$HOME/proj"'
-test "$(pod exec orca-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
+./op-server.sh start
+pod exec --user dev orca-pods-server sh -c 'for i in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q "\"state\": \"ready\"" && break; sleep 2; done; orca-ide status --json | jq -r .result.runtime.appVersion; test -d "$HOME/proj"'
+test "$(pod exec orca-pods-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
 echo "OK    fixed machine id, a new image does not leave a foreign Orca lock"
-./orca-server.sh stop
-ip -br link | grep -q "^br-orca" && { echo "FAIL  br-orca left behind"; exit 1; }
+./op-server.sh stop
+ip -br link | grep -q "^br-orca-pods" && { echo "FAIL  br-orca-pods left behind"; exit 1; }
 echo "RESULT e2e: all OK"

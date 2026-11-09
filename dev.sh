@@ -1,5 +1,5 @@
 #!/bin/sh
-# Development: the same run as orca-client.sh, with an image built locally in .local/.
+# Development: the same run as op-client.sh, with an image built locally in .local/.
 #
 #   ./dev.sh                  start Orca with the local image
 #   ./dev.sh login            log the running client in to Tailscale
@@ -15,12 +15,12 @@ PODS_CONFIG="$PWD/client.env"
 PODS_STORE="$PWD/.local"
 PODS_PULL=0
 PODS_SOURCED=1
-. ./orca-client.sh
+. ./op-client.sh
 
 FAILS=0
 check() { # name expected(pass|block) curl-args...
   name=$1; want=$2; shift 2
-  if pod exec orca-client curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
+  if pod exec orca-pods-client curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
   if [ "$got" = "$want" ]; then echo "OK    $name ($got)"; else echo "FAIL  $name: expected $want, got $got"; FAILS=$((FAILS + 1)); fi
 }
 
@@ -44,7 +44,7 @@ run_tests() {
   start_client --tmpfs /state
   sleep 4
 
-  brgw=$(pod exec orca-client sh -c "ip route | awk '/default/{print \$3}'")
+  brgw=$(pod exec orca-pods-client sh -c "ip route | awk '/default/{print \$3}'")
   [ -n "$brgw" ] || { echo "FAIL  cannot find the container gateway"; exit 1; }
   check "LAN gateway" block "http://$gw"
   check "host" block "http://$hostip:18767"
@@ -53,8 +53,8 @@ run_tests() {
   [ -z "$ctl" ] || check "control target" block $ctl
   check "http example.com" block http://example.com
   check "https tailscale.com" pass https://tailscale.com
-  if pod exec orca-client sh -c 'ip -br link | grep -q tailscale0'; then echo "OK    tailscale0 exists"; else echo "FAIL  tailscale0 missing"; FAILS=$((FAILS + 1)); fi
-  [ "$(pod exec orca-client id -u dev)" = 30100 ] && echo "OK    dev has UID 30100" || { echo "FAIL  dev UID"; FAILS=$((FAILS + 1)); }
+  if pod exec orca-pods-client sh -c 'ip -br link | grep -q tailscale0'; then echo "OK    tailscale0 exists"; else echo "FAIL  tailscale0 missing"; FAILS=$((FAILS + 1)); fi
+  [ "$(pod exec orca-pods-client id -u dev)" = 30100 ] && echo "OK    dev has UID 30100" || { echo "FAIL  dev UID"; FAILS=$((FAILS + 1)); }
 
   echo "--- positive check: firewall off for a moment, test container without data only"
   pod unshare --rootless-netns nft delete table inet orca_pods
@@ -66,7 +66,7 @@ run_tests() {
   teardown; trap - EXIT; rm -rf "$srv"
   sleep 1
   echo "--- host"
-  echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward) br-orca=$(ip -br link | grep -c br-orca || true) pasta=$(pgrep -c pasta || true)"
+  echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward) br-orca-pods=$(ip -br link | grep -c br-orca-pods || true) pasta=$(pgrep -c pasta || true)"
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }
 }
 

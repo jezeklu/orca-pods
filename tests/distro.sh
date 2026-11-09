@@ -22,12 +22,12 @@ case "$(. /etc/os-release; echo "$ID")" in
   fedora) dnf -q -y install util-linux >/dev/null; yes=-y ;;
   *) apt-get -qq update; yes="-y --no-install-recommends" ;;
 esac
-cmd=$(sh /t/orca-client packages)
+cmd=$(sh /t/op-client packages)
 echo "+ $cmd"
 eval "${cmd#sudo } $yes" >/dev/null 2>&1
 useradd -m t
 grep -q "^t:" /etc/subuid 2>/dev/null || echo "t:100000:65536" >>/etc/subuid
-su - t -c "sh /t/orca-server doctor; sh /t/orca-client doctor"
+su - t -c "sh /t/op-server doctor; sh /t/op-client doctor"
 '
 
 fails=0

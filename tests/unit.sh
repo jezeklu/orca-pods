@@ -45,16 +45,16 @@ printf 'PODS_INSTANCE=sample\n' >"$tmp/env"
 ok "config file" "$(ROLE=server; PODS_CONFIG=$tmp/env; . lib/common.sh; echo "$INSTANCE")" sample
 
 for tools in 'agy;id' 'agy $(id)' 'AGY'; do
-  ( PODS_SOURCED=1 PODS_TOOLS=$tools sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+  ( PODS_SOURCED=1 PODS_TOOLS=$tools sh -c '. ./op-server.sh' ) >/dev/null 2>&1
   ok "PODS_TOOLS '$tools' rejected" $? 1
 done
-( PODS_SOURCED=1 PODS_TOOLS='agy other-tool' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+( PODS_SOURCED=1 PODS_TOOLS='agy other-tool' sh -c '. ./op-server.sh' ) >/dev/null 2>&1
 ok "PODS_TOOLS list accepted" $? 0
 for runtimes in 'node@24;id' 'node@$(id)' 'node@24 python/3'; do
-  ( PODS_SOURCED=1 PODS_RUNTIMES=$runtimes sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+  ( PODS_SOURCED=1 PODS_RUNTIMES=$runtimes sh -c '. ./op-server.sh' ) >/dev/null 2>&1
   ok "PODS_RUNTIMES '$runtimes' rejected" $? 1
 done
-( PODS_SOURCED=1 PODS_RUNTIMES='node@24 python@3.13 go@1.25' sh -c '. ./orca-server.sh' ) >/dev/null 2>&1
+( PODS_SOURCED=1 PODS_RUNTIMES='node@24 python@3.13 go@1.25' sh -c '. ./op-server.sh' ) >/dev/null 2>&1
 ok "PODS_RUNTIMES list accepted" $? 0
 
 # A rejected saved login falls back to an anonymous pull, other errors do not.
@@ -77,12 +77,12 @@ unset -f pod
 set +e
 
 rules=$(firewall_rules)
-for want in 'iifname "br-orca" drop' 'tcp dport 443 accept' '192.168.0.0/16' 'meta nfproto ipv6 drop'; do
+for want in 'iifname "br-orca-pods" drop' 'tcp dport 443 accept' '192.168.0.0/16' 'meta nfproto ipv6 drop'; do
   case "$rules" in *"$want"*) r=ok ;; *) r=bad ;; esac; ok "firewall: $want" "$r" ok
 done
 
 ./build.sh
-for f in dist/orca-*; do
+for f in dist/op-*; do
   case "$f" in *.sig) continue ;; esac
   sh -n "$f"; ok "syntax $f" $? 0
   ok "no @include in $f" "$(grep -c '@include' "$f")" 0
@@ -94,25 +94,25 @@ done
 mkdir -p "$tmp/rel" "$tmp/cfg"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
 printf 'orca-pods %s\n' "$(cat "$tmp/key.pub")" >"$tmp/cfg/allowed_signers"
-cp dist/orca-server "$tmp/rel/orca-server"
-echo '# new' >>"$tmp/rel/orca-server"
-ssh-keygen -q -Y sign -f "$tmp/key" -n orca-pods "$tmp/rel/orca-server" </dev/null
-cp dist/orca-server "$tmp/deployed"
+cp dist/op-server "$tmp/rel/op-server"
+echo '# new' >>"$tmp/rel/op-server"
+ssh-keygen -q -Y sign -f "$tmp/key" -n orca-pods "$tmp/rel/op-server" </dev/null
+cp dist/op-server "$tmp/deployed"
 su_update() { PODS_CONFIG="$tmp/cfg/server.env" PODS_RELEASE_DIR="$tmp/rel" PODS_STORE="$tmp/store" "$tmp/deployed" self-update >/dev/null 2>&1; }
 su_update; ok "valid signature" $? 0
 ok "script replaced" "$(tail -n 1 "$tmp/deployed")" '# new'
-cp dist/orca-server "$tmp/deployed"
-echo '# tampered' >>"$tmp/rel/orca-server"
+cp dist/op-server "$tmp/deployed"
+echo '# tampered' >>"$tmp/rel/op-server"
 su_update; ok "tampered file rejected" $? 1
-ok "script unchanged" "$(cmp -s dist/orca-server "$tmp/deployed"; echo $?)" 0
+ok "script unchanged" "$(cmp -s dist/op-server "$tmp/deployed"; echo $?)" 0
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/other"
-cp dist/orca-server "$tmp/rel/orca-server"
-rm -f "$tmp/rel/orca-server.sig"
-ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/orca-server" </dev/null
+cp dist/op-server "$tmp/rel/op-server"
+rm -f "$tmp/rel/op-server.sig"
+ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/op-server" </dev/null
 su_update; ok "unknown key rejected" $? 1
 
 if command -v shellcheck >/dev/null; then
-  shellcheck -x -S warning -e SC1091,SC2034 orca-client.sh orca-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]*
+  shellcheck -x -S warning -e SC1091,SC2034 op-client.sh op-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]*
   ok "shellcheck" $? 0
 else
   echo "SKIP  shellcheck not installed"

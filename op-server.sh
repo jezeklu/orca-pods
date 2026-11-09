@@ -2,20 +2,20 @@
 # Isolated Orca server in a rootless container.
 #
 # Usage:
-#   orca-server install           set everything up and start the server at boot
-#   orca-server uninstall         remove the service, keep the data
-#   orca-server start | stop      start or stop the server
-#   orca-server login             log the server in to Tailscale
-#   orca-server status            server status and paired devices
-#   orca-server pair [--mobile]   print pairing codes
-#   orca-server unpair <id>       revoke a paired device, its id is in status
-#   orca-server rename <id> <name>  name a paired device
-#   orca-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS
-#   orca-server self-update       replace this script, only with a validly signed release
-#   orca-server test [URL]        isolation tests, without data and only while the server is stopped
-#   orca-server cleanup           manual cleanup after a crash
-#   orca-server doctor            check requirements
-#   orca-server packages          print the command that installs the packages
+#   op-server install           set everything up and start the server at boot
+#   op-server uninstall         remove the service, keep the data
+#   op-server start | stop      start or stop the server
+#   op-server login             log the server in to Tailscale
+#   op-server status            server status and paired devices
+#   op-server pair [--mobile]   print pairing codes
+#   op-server unpair <id>       revoke a paired device, its id is in status
+#   op-server rename <id> <name>  name a paired device
+#   op-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS
+#   op-server self-update       replace this script, only with a validly signed release
+#   op-server test [URL]        isolation tests, without data and only while the server is stopped
+#   op-server cleanup           manual cleanup after a crash
+#   op-server doctor            check requirements
+#   op-server packages          print the command that installs the packages
 #
 # Settings: ~/.config/orca-pods/server.env, see server.env.example.
 
@@ -38,12 +38,12 @@ esac
 MEMORY="${PODS_MEMORY:-10g}"
 HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
-UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-$INSTANCE.service"
+UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-pods-$INSTANCE.service"
 # In a user namespace of the store: container UID n is n + 1, see --uidmap.
 DEV_IN_NS=30101
 
 running() {
-  [ "$(pod container inspect --format '{{.State.Running}}' orca-server 2>/dev/null)" = true ]
+  [ "$(pod container inspect --format '{{.State.Running}}' orca-pods-server 2>/dev/null)" = true ]
 }
 
 require_running() {
@@ -90,8 +90,8 @@ prepare_dirs() { # home state
 }
 
 run_container() { # options for mounts
-  pod run -d --rm --name orca-server --hostname "orca-$INSTANCE" \
-    --network orca-net --dns 1.1.1.1 --dns 9.9.9.9 \
+  pod run -d --rm --name orca-pods-server --hostname "orca-pods-$INSTANCE" \
+    --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 \
     --uidmap 0:1:65536 --gidmap 0:1:65536 \
     --device /dev/net/tun --cap-drop=all --cap-add=NET_ADMIN \
     --security-opt no-new-privileges --security-opt label=disable \
@@ -108,10 +108,10 @@ teardown() {
   trap '' INT TERM HUP PIPE
   set +e
   bad=0
-  remove_containers 5 orca-server || { echo "WARNING: could not remove the server" >&2; bad=1; }
-  remove_containers 0 orca-fw || { echo "WARNING: could not remove the firewall" >&2; bad=1; }
-  if pod network exists orca-net 2>/dev/null; then
-    pod network rm orca-net >/dev/null 2>&1 || { echo "WARNING: could not remove the orca-net network" >&2; bad=1; }
+  remove_containers 5 orca-pods-server || { echo "WARNING: could not remove the server" >&2; bad=1; }
+  remove_containers 0 orca-pods-fw || { echo "WARNING: could not remove the firewall" >&2; bad=1; }
+  if pod network exists orca-pods-net 2>/dev/null; then
+    pod network rm orca-pods-net >/dev/null 2>&1 || { echo "WARNING: could not remove the orca-pods-net network" >&2; bad=1; }
   fi
   rm -rf "$RUNROOT"
   if [ "$bad" -eq 0 ]; then echo "Server stopped, data kept."; else echo "Cleanup incomplete, see the warnings above." >&2; fi
@@ -149,21 +149,21 @@ start_server() {
     -v "$STORE/machine-id:/etc/machine-id:ro" -v "$STORE/machine-id:/var/lib/dbus/machine-id:ro" \
     -v "$SECRETS:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   trap - HUP INT TERM
-  pod exec -d --user dev orca-server orca-serve >/dev/null
+  pod exec -d --user dev orca-pods-server orca-serve >/dev/null
   # Offline start must not fail on this, runtimes for projects are not needed to reach the server.
   [ -z "$RUNTIMES" ] || echo "Installing $RUNTIMES if missing..."
   # shellcheck disable=SC2086 # list of runtimes
-  pod exec --user dev orca-server orca-runtimes $RUNTIMES || echo "WARNING: could not install PODS_RUNTIMES ($RUNTIMES)." >&2
+  pod exec --user dev orca-pods-server orca-runtimes $RUNTIMES || echo "WARNING: could not install PODS_RUNTIMES ($RUNTIMES)." >&2
   # Also on servers set up before the skills came from the server itself.
-  pod exec --user dev orca-server orca-skills || true
+  pod exec --user dev orca-pods-server orca-skills || true
   [ -z "$TOOLS" ] || echo "Installing $TOOLS if missing..."
   # shellcheck disable=SC2086 # list of tools
-  [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
+  [ -z "$TOOLS" ] || pod exec --user dev orca-pods-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
   echo "Server running on 127.0.0.1:$PORT."
 }
 
 tailscale_state() {
-  pod exec orca-server tailscale status --json 2>/dev/null \
+  pod exec orca-pods-server tailscale status --json 2>/dev/null \
     | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p'
 }
 
@@ -171,10 +171,10 @@ show_status() {
   if ! running; then echo "The server is not running."; return 1; fi
   echo "Server running on 127.0.0.1:$PORT."
   echo "Tailscale: $(tailscale_state || true)"
-  pod exec --user dev orca-server sh -c 'orca-ide status --json 2>/dev/null' \
+  pod exec --user dev orca-pods-server sh -c 'orca-ide status --json 2>/dev/null' \
     | sed -n 's/.*"appVersion": *"\([^"]*\)".*/Orca: \1/p'
   echo "Paired devices:"
-  if devices=$(pod exec --user dev orca-server orca-devices 2>/dev/null); then
+  if devices=$(pod exec --user dev orca-pods-server orca-devices 2>/dev/null); then
     printf '%s\n' "$devices" | sed 's/^/  /'
   else
     echo "  unknown, the image is older than this script"
@@ -184,35 +184,35 @@ show_status() {
 unpair() {
   require_running
   [ -n "${1:-}" ] || { echo "Usage: $prog unpair <device id from $prog status>" >&2; exit 1; }
-  pod exec --user dev orca-server orca-devices remove "$1"
+  pod exec --user dev orca-pods-server orca-devices remove "$1"
 }
 
 rename_device() {
   require_running
   [ -n "${2:-}" ] || { echo "Usage: $prog rename <device id from $prog status> <name>" >&2; exit 1; }
-  pod exec --user dev orca-server orca-devices rename "$1" "$2"
+  pod exec --user dev orca-pods-server orca-devices rename "$1" "$2"
 }
 
 tailscale_login() {
   require_running
-  pod exec orca-server tailscale up "--hostname=orca-$INSTANCE" \
+  pod exec orca-pods-server tailscale up "--hostname=orca-pods-$INSTANCE" \
     --advertise-tags=tag:orca-server --accept-dns=false
 }
 
 pairing() {
   require_running
-  ip=$(pod exec orca-server tailscale ip -4 2>/dev/null || true)
+  ip=$(pod exec orca-pods-server tailscale ip -4 2>/dev/null || true)
   mobile=""
   [ "${1:-}" != --mobile ] || mobile=--mobile
   set -- "ws://127.0.0.1:$PORT"
   [ -z "$ip" ] || set -- "$@" "ws://$ip:6768"
-  pod exec --user dev orca-server orca-pair $mobile "$@"
+  pod exec --user dev orca-pods-server orca-pair $mobile "$@"
   echo "Local Orca warns that the 127.0.0.1 link points back to this device. Turn on its SSH tunnel option: the port is forwarded into the container." >&2
 }
 
 update_all() {
   old=""
-  ! running || old=$(pod inspect -f '{{.Image}}' orca-server)
+  ! running || old=$(pod inspect -f '{{.Image}}' orca-pods-server)
   PULL=1 update_image
   if [ -z "$old" ]; then
     echo "The server is not running, the image is used at the next start."
@@ -226,10 +226,10 @@ update_all() {
   echo "The image is up to date."
   [ -z "$RUNTIMES" ] || echo "Updating $RUNTIMES..."
   # shellcheck disable=SC2086 # list of runtimes
-  pod exec --user dev orca-server orca-runtimes --update $RUNTIMES
+  pod exec --user dev orca-pods-server orca-runtimes --update $RUNTIMES
   [ -z "$TOOLS" ] || echo "Updating $TOOLS..."
   # shellcheck disable=SC2086 # list of tools
-  [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools --update $TOOLS
+  [ -z "$TOOLS" ] || pod exec --user dev orca-pods-server orca-tools --update $TOOLS
   echo "Done."
 }
 
@@ -242,21 +242,21 @@ self_update() {
   work=$(mktemp -d)
   trap 'rm -rf "$work"' EXIT
   if [ -n "${PODS_RELEASE_DIR:-}" ]; then
-    cp "$PODS_RELEASE_DIR/orca-server" "$PODS_RELEASE_DIR/orca-server.sig" "$work/"
+    cp "$PODS_RELEASE_DIR/op-server" "$PODS_RELEASE_DIR/op-server.sig" "$work/"
   elif command -v gh >/dev/null; then
-    gh release download -R jezeklu/orca-pods -p orca-server -p orca-server.sig -D "$work"
+    gh release download -R jezeklu/orca-pods -p op-server -p op-server.sig -D "$work"
   else
-    for file in orca-server orca-server.sig; do
+    for file in op-server op-server.sig; do
       curl -fsSL -o "$work/$file" "https://github.com/jezeklu/orca-pods/releases/latest/download/$file"
     done
   fi
-  if ! ssh-keygen -Y verify -f "$signers" -I orca-pods -n orca-pods -s "$work/orca-server.sig" \
-    <"$work/orca-server" >/dev/null 2>&1; then
+  if ! ssh-keygen -Y verify -f "$signers" -I orca-pods -n orca-pods -s "$work/op-server.sig" \
+    <"$work/op-server" >/dev/null 2>&1; then
     echo "Invalid signature, nothing changed." >&2
     exit 1
   fi
-  chmod +x "$work/orca-server"
-  mv "$work/orca-server" "$self"
+  chmod +x "$work/op-server"
+  mv "$work/op-server" "$self"
   echo "Script updated from a signed release."
 }
 
@@ -294,10 +294,10 @@ install_server() {
   fi
   [ -d "$SECRETS" ] || { mkdir -p "$SECRETS"; chmod 700 "$SECRETS"; }
   start_server
-  pod exec --user dev orca-server orca-update --no-restart
+  pod exec --user dev orca-pods-server orca-update --no-restart
   write_unit
   systemctl --user daemon-reload
-  systemctl --user enable "orca-$INSTANCE.service"
+  systemctl --user enable "orca-pods-$INSTANCE.service"
   if ! loginctl enable-linger "$(id -un)" 2>/dev/null; then
     echo "Start at boot needs sudo here. Run: sudo loginctl enable-linger $(id -un)"
   fi
@@ -305,7 +305,7 @@ install_server() {
 }
 
 uninstall_server() {
-  systemctl --user disable --now "orca-$INSTANCE.service" 2>/dev/null || true
+  systemctl --user disable --now "orca-pods-$INSTANCE.service" 2>/dev/null || true
   rm -f "$UNIT"
   systemctl --user daemon-reload 2>/dev/null || true
   teardown
@@ -319,13 +319,13 @@ report() { # ok? name
 
 check() { # name expected(pass|block) curl-args...
   name=$1; want=$2; shift 2
-  if pod exec orca-server curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
+  if pod exec orca-pods-server curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
   [ "$got" = "$want" ]; report $? "$name ($got)"
 }
 
 inside() { # name shell-code that must succeed
   name=$1; shift
-  pod exec --user dev orca-server sh -c "$1" >/dev/null 2>&1; report $? "$name"
+  pod exec --user dev orca-pods-server sh -c "$1" >/dev/null 2>&1; report $? "$name"
 }
 
 # Runs on throwaway directories. The positive check switches the firewall off, so no data may be in reach.
@@ -362,10 +362,10 @@ run_tests() {
   run_container --mount "type=bind,src=$work/home,dst=/home/dev" \
     --mount "type=bind,src=$work/state,dst=/state" \
     -v "$work/secrets:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
-  pod exec -d --user dev orca-server python3 -m http.server 6768 --directory /tmp >/dev/null
+  pod exec -d --user dev orca-pods-server python3 -m http.server 6768 --directory /tmp >/dev/null
   sleep 3
 
-  brgw=$(pod exec orca-server sh -c "ip route | awk '/default/{print \$3}'")
+  brgw=$(pod exec orca-pods-server sh -c "ip route | awk '/default/{print \$3}'")
   [ -n "$brgw" ] || { echo "FAIL  cannot find the container gateway"; exit 1; }
   check "LAN gateway" block "http://$gw"
   check "host" block "http://$hostip:18767"
