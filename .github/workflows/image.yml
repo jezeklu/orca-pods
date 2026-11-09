@@ -53,11 +53,12 @@ jobs:
             tailscaled --version
             command -v iptables
             command -v ip
+            command -v orca-release
           '
           docker run --rm orca-pods:server-test sh -ec '
             test "$(id -u dev)" = 30100
             for tool in git gh mc htop curl jq rg gcc python3 uv mise node pnpm claude codex opencode \
-              Xvfb tailscale orca-update orca-pair orca-runtimes git-credential-pods; do
+              Xvfb tailscale orca-release orca-update orca-pair orca-runtimes git-credential-pods; do
               command -v "$tool"
             done
           '

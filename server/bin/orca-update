@@ -6,7 +6,6 @@
 #   orca-update --check      print the latest version, change nothing
 set -euo pipefail
 APP=$HOME/.local/share/orca-server
-REPO=https://github.com/stablyai/orca/releases
 restart=1
 check=0
 want=""
@@ -19,12 +18,8 @@ for arg in "$@"; do
   esac
 done
 
-if [ -n "$want" ]; then url=$REPO/download/v$want/latest-linux.yml; else url=$REPO/latest/download/latest-linux.yml; fi
-yml=$(curl -fsSL --retry 3 "$url")
-version=$(awk '/^version:/{print $2}' <<<"$yml")
-sum=$(awk '/^sha512:/{print $2}' <<<"$yml")
-[ -n "$version" ] && [ -n "$sum" ] || { echo "Cannot read the release description." >&2; exit 1; }
-[ "$check" = 0 ] || { echo "$version"; exit 0; }
+[ "$check" = 0 ] || exec orca-release version "$want"
+version=$(orca-release version "$want")
 
 mkdir -p "$APP"
 previous=$(readlink "$APP/current" 2>/dev/null || true)
@@ -33,17 +28,7 @@ if [ "$previous" = "$version" ]; then
   exit 0
 fi
 
-if [ ! -x "$APP/$version/AppRun" ]; then
-  work=$(mktemp -d "$APP/.work.XXXXXX")
-  trap 'rm -rf "$work"' EXIT
-  curl -fL --retry 3 -o "$work/orca.AppImage" "$REPO/download/v$version/orca-linux.AppImage"
-  [ "$(openssl dgst -sha512 -binary "$work/orca.AppImage" | base64 -w0)" = "$sum" ] \
-    || { echo "SHA-512 mismatch, nothing changed." >&2; exit 1; }
-  chmod +x "$work/orca.AppImage"
-  (cd "$work" && ./orca.AppImage --appimage-extract >/dev/null)
-  mv "$work/squashfs-root" "$APP/$version"
-fi
-
+orca-release install "$APP" "$version" >/dev/null
 ln -sfn "$version" "$APP/.current"
 mv -T "$APP/.current" "$APP/current"
 

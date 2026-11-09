@@ -15,6 +15,7 @@ RUN apt-get update && apt-get upgrade -y \
       libwayland-client0 libwayland-cursor0 libwayland-egl1 fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -s /bin/bash -u 30100 dev
+COPY image/bin/ /usr/local/bin/
 
 FROM base AS server
 ARG UV_VERSION=0.13.7

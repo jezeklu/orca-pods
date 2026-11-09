@@ -112,7 +112,7 @@ ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/op-server" </dev/nu
 su_update; ok "unknown key rejected" $? 1
 
 if command -v shellcheck >/dev/null; then
-  shellcheck -x -S warning -e SC1091,SC2034 op-client.sh op-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]*
+  shellcheck -x -S warning -e SC1091,SC2034 op-client.sh op-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]* image/bin/[a-z]*
   ok "shellcheck" $? 0
 else
   echo "SKIP  shellcheck not installed"

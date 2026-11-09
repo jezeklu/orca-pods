@@ -1,0 +1,49 @@
+#!/bin/bash
+# Orca releases for both roles, used inside the container only.
+#   orca-release version [version]        print the latest version, or check that the given one exists
+#   orca-release install DIR [version]    verify and extract into DIR/<version> unless it is there, print the version
+set -euo pipefail
+REPO=https://github.com/stablyai/orca/releases
+usage() { echo "Usage: orca-release version [version] | orca-release install DIR [version]" >&2; exit 1; }
+# Versions become folder names and URLs, from the user and from the network alike.
+valid() { [[ $1 =~ ^[0-9]+(\.[0-9]+)*$ ]]; }
+
+describe() { # [version], sets version and sum
+  if [ -n "$1" ]; then
+    valid "$1" || usage
+    url=$REPO/download/v$1/latest-linux.yml
+  else
+    url=$REPO/latest/download/latest-linux.yml
+  fi
+  yml=$(curl -fsSL --retry 3 "$url")
+  version=$(awk '/^version:/{print $2}' <<<"$yml")
+  sum=$(awk '/^sha512:/{print $2}' <<<"$yml")
+  [ -n "$version" ] && [ -n "$sum" ] || { echo "Cannot read the release description." >&2; exit 1; }
+  valid "$version" || { echo "Unexpected version in the release description." >&2; exit 1; }
+}
+
+case "${1:-}" in
+  version)
+    describe "${2:-}"
+    echo "$version"
+    ;;
+  install)
+    dir=${2:-}
+    [ -n "$dir" ] || usage
+    describe "${3:-}"
+    if [ ! -x "$dir/$version/AppRun" ]; then
+      mkdir -p "$dir"
+      work=$(mktemp -d "$dir/.work.XXXXXX")
+      trap 'rm -rf "$work"' EXIT
+      curl -fL --retry 3 -o "$work/orca.AppImage" "$REPO/download/v$version/orca-linux.AppImage"
+      want=$(base64 -d <<<"$sum" | od -An -v -tx1 | tr -d ' \n')
+      [ "$(sha512sum "$work/orca.AppImage" | cut -d ' ' -f 1)" = "$want" ] \
+        || { echo "SHA-512 mismatch, nothing changed." >&2; exit 1; }
+      chmod +x "$work/orca.AppImage"
+      (cd "$work" && ./orca.AppImage --appimage-extract >/dev/null)
+      mv "$work/squashfs-root" "$dir/$version"
+    fi
+    echo "$version"
+    ;;
+  *) usage ;;
+esac

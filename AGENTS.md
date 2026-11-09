@@ -11,6 +11,7 @@ Everything in the repository is in English: code, comments, script output, docum
 - `op-client.sh`, `op-server.sh`: the role scripts. `build.sh` inlines `lib/common.sh` at `# @include` and writes standalone files to `dist/`. Never edit `dist/`.
 - `lib/common.sh`: shared code. The caller sets `ROLE` before loading it.
 - `Dockerfile`: one file, the `server` stage for the server image, the last stage for the client image.
+- `image/bin/`: helpers installed into both images (`orca-release`).
 - `server/bin/`: helpers installed into the server image (`orca-serve`, `orca-update`, `gh`, `git-credential-pods`, …).
 - `dev.sh`: runs the client with a locally built image from `.local/` and paths from `client.env`.
 - `test.sh`, `tests/`: all tests, see below.
