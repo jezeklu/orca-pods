@@ -37,7 +37,8 @@ image_url() {
 inner='
 set -eux
 cd repo
-cmd=$(sh op-server.sh packages)
+# The client packages include those of the server.
+cmd=$(sh op-client.sh packages)
 . /etc/os-release
 echo "$PRETTY_NAME, SELinux: $(getenforce 2>/dev/null || echo no)"
 case "$ID" in
