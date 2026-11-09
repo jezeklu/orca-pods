@@ -68,11 +68,19 @@ echo "OK    forged token rejected"
 id=$(jq -r 'max_by(.pairedAt) | .deviceId' ~/.config/orca/orca-devices.json)
 orca-devices | grep -q "^${id:0:8} " || { echo "FAIL  device not listed"; exit 1; }
 echo "OK    paired device listed"
+before=$(jq length ~/.config/orca/orca-devices.json)
+orca-devices rename "${id:0:8}" "test laptop" >/dev/null || { echo "FAIL  rename"; exit 1; }
+for _ in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q '"state": "ready"' && break; sleep 2; done
+orca-devices | grep -q "^${id:0:8}  test laptop  " || { echo "FAIL  device not renamed"; exit 1; }
+ORCA_PAIRING_CODE=$code orca-ide status --json | jq -e .ok >/dev/null || { echo "FAIL  renamed device lost its code"; exit 1; }
+echo "OK    device renamed, its code still works"
 orca-devices remove "${id:0:8}" >/dev/null || { echo "FAIL  remove"; exit 1; }
 for _ in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q '"state": "ready"' && break; sleep 2; done
 if orca-devices | grep -q "^${id:0:8} "; then echo "FAIL  device still listed"; exit 1; fi
 if ORCA_PAIRING_CODE=$code orca-ide status --json 2>/dev/null | jq -e .ok >/dev/null; then echo "FAIL  revoked code still works"; exit 1; fi
 echo "OK    revoked device rejected"
+test "$(jq length ~/.config/orca/orca-devices.json)" -eq $((before - 1)) || { echo "FAIL  a restart added a pairing code"; exit 1; }
+echo "OK    restarts add no pairing codes"
 orca-devices remove "zzzz" >/dev/null 2>&1 && { echo "FAIL  invalid id accepted"; exit 1; }
 echo "OK    invalid device id rejected"
 SH
@@ -92,6 +100,8 @@ pod kill orca-server >/dev/null
 sleep 1
 ./orca-server.sh start
 pod exec --user dev orca-server sh -c 'for i in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q "\"state\": \"ready\"" && break; sleep 2; done; orca-ide status --json | jq -r .result.runtime.appVersion; test -d "$HOME/proj"'
+test "$(pod exec orca-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
+echo "OK    fixed machine id, a new image does not leave a foreign Orca lock"
 ./orca-server.sh stop
 ip -br link | grep -q "^br-orca" && { echo "FAIL  br-orca left behind"; exit 1; }
 echo "RESULT e2e: all OK"

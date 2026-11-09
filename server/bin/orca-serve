@@ -26,20 +26,22 @@ clear_previous() {
   sleep 1
 }
 
-# Revoking a device edits the list only while Orca is stopped, see orca-devices.
-unpair() {
-  [ -f "$RUN/unpair" ] || return 0
-  read -r id <"$RUN/unpair" || id=""
+# Device changes edit the list only while Orca is stopped, see orca-devices.
+edit_devices() {
+  [ -f "$RUN/devices" ] || return 0
   file=$HOME/.config/orca/orca-devices.json
-  if [ -n "$id" ] && [ -f "$file" ]; then
-    jq --arg id "$id" 'map(select(.deviceId != $id))' "$file" >"$file.new" && mv "$file.new" "$file"
+  if [ -f "$file" ] && jq -e 'has("id") and (.op == "remove" or .op == "rename")' "$RUN/devices" >/dev/null 2>&1; then
+    jq --slurpfile e "$RUN/devices" '$e[0] as $e
+      | if $e.op == "remove" then map(select(.deviceId != $e.id))
+        else map(if .deviceId == $e.id then .name = $e.name else . end) end' "$file" >"$file.new" \
+      && mv "$file.new" "$file"
   fi
-  rm -f "$RUN/unpair"
+  rm -f "$RUN/devices"
 }
 
 while :; do
   clear_previous
-  unpair
+  edit_devices
   if [ ! -x "$APP/current/AppRun" ]; then
     sleep 5
   elif [ -f "$RUN/pair" ]; then
@@ -59,7 +61,8 @@ while :; do
     orca-restart
     wait "$pid"
   else
-    serve --supervise >>"$RUN/serve.log" 2>&1
+    # Without --no-pairing every start leaves a fresh unused pairing code in the device list.
+    serve --supervise --no-pairing >>"$RUN/serve.log" 2>&1
   fi
   sleep 1
 done

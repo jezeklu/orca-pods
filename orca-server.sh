@@ -9,6 +9,7 @@
 #   orca-server status            server status and paired devices
 #   orca-server pair [--mobile]   print pairing codes
 #   orca-server unpair <id>       revoke a paired device, its id is in status
+#   orca-server rename <id> <name>  name a paired device
 #   orca-server update            pull a new image and Node patch releases
 #   orca-server self-update       replace this script, only with a validly signed release
 #   orca-server test [URL]        isolation tests, without data and only while the server is stopped
@@ -138,15 +139,20 @@ start_server() {
     teardown
     exit 1
   fi
+  # Orca tells a stale lock from one held by another machine by the machine id. The image brings its own,
+  # so without a fixed one the first start of a new image finds a lock it does not dare to clear.
+  [ -s "$STORE/machine-id" ] || { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; echo; } >"$STORE/machine-id"
   # shellcheck disable=SC2046 # one option per line, paths without whitespace are checked below
   run_container --mount "type=bind,src=$HOME_DIR,dst=/home/dev" \
     --mount "type=bind,src=$STATE_DIR,dst=/state" \
+    -v "$STORE/machine-id:/etc/machine-id:ro" -v "$STORE/machine-id:/var/lib/dbus/machine-id:ro" \
     -v "$SECRETS:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   trap - HUP INT TERM
   pod exec -d --user dev orca-server orca-serve >/dev/null
   # Offline start must not fail on this, Node for projects is not needed to reach the server.
   # shellcheck disable=SC2086 # list of majors
   pod exec --user dev orca-server orca-node $NODE_VERSIONS || echo "WARNING: could not install the extra Node versions." >&2
+  [ -z "$TOOLS" ] || echo "Installing $TOOLS if missing..."
   # shellcheck disable=SC2086 # list of tools
   [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools $TOOLS || echo "WARNING: could not install PODS_TOOLS ($TOOLS)." >&2
   echo "Server running on 127.0.0.1:$PORT."
@@ -177,6 +183,12 @@ unpair() {
   pod exec --user dev orca-server orca-devices remove "$1"
 }
 
+rename_device() {
+  require_running
+  [ -n "${2:-}" ] || { echo "Usage: $prog rename <device id from $prog status> <name>" >&2; exit 1; }
+  pod exec --user dev orca-server orca-devices rename "$1" "$2"
+}
+
 tailscale_login() {
   require_running
   pod exec orca-server tailscale up "--hostname=orca-$INSTANCE" \
@@ -195,14 +207,26 @@ pairing() {
 }
 
 update_all() {
+  old=""
+  ! running || old=$(pod inspect -f '{{.Image}}' orca-server)
   PULL=1 update_image
-  echo "The new image is used at the next start."
-  if running; then
-    # shellcheck disable=SC2086 # list of majors
-    pod exec --user dev orca-server orca-node --update $NODE_VERSIONS
-    # shellcheck disable=SC2086 # list of tools
-    [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools --update $TOOLS
+  if [ -z "$old" ]; then
+    echo "The server is not running, the image is used at the next start."
+    return 0
   fi
+  # Helpers of an older image do not know the current options, so they run only from the new one.
+  if [ "$old" != "$(pod image inspect -f '{{.Id}}' orca-pods)" ]; then
+    echo "New image ready. Restart to use it, the start installs the rest: $prog stop && $prog start"
+    return 0
+  fi
+  echo "The image is up to date."
+  echo "Updating Node.js $NODE_VERSIONS..."
+  # shellcheck disable=SC2086 # list of majors
+  pod exec --user dev orca-server orca-node --update $NODE_VERSIONS
+  [ -z "$TOOLS" ] || echo "Updating $TOOLS..."
+  # shellcheck disable=SC2086 # list of tools
+  [ -z "$TOOLS" ] || pod exec --user dev orca-server orca-tools --update $TOOLS
+  echo "Done."
 }
 
 # Signature first, the new file is never run before it. The trusted key stays on the host,
@@ -400,10 +424,11 @@ main() {
     login) tailscale_login ;;
     pair) shift; pairing "$@" ;;
     unpair) shift; unpair "$@" ;;
+    rename) shift; rename_device "$@" ;;
     update) update_all ;;
     self-update) self_update ;;
     test) shift; run_tests "$@" ;;
-    *) echo "Usage: $prog [install|uninstall|start|stop|status|login|pair|unpair|update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [install|uninstall|start|stop|status|login|pair|unpair|rename|update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 

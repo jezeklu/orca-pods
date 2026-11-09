@@ -1,7 +1,9 @@
 #!/bin/bash
 # Paired devices of the Orca server.
-#   orca-devices               list them
-#   orca-devices remove <id>   revoke one, by its id or a unique prefix of at least 4 characters
+#   orca-devices                     list them
+#   orca-devices remove <id>         revoke one
+#   orca-devices rename <id> <name>  give one a name, Orca names every device "CLI <date>"
+# <id> is the device id or a unique prefix of at least 4 characters.
 set -euo pipefail
 FILE=$HOME/.config/orca/orca-devices.json
 RUN=/tmp/orca-serve
@@ -9,39 +11,68 @@ RUN=/tmp/orca-serve
 list() {
   [ -s "$FILE" ] || { echo "No paired devices."; return; }
   # Names come from the clients, so control characters are dropped before printing.
-  jq -r 'if length == 0 then "No paired devices." else
+  # Orca keeps no address, only the kind of the last one. The host port arrives from a private address.
+  jq -r 'def t: . / 1000 | floor | strftime("%Y-%m-%d %H:%M UTC");
+    if length == 0 then "No paired devices." else
       .[] | [ .deviceId[0:8],
               ((.name // "?") | gsub("[[:cntrl:]]"; "")),
-              "paired " + (.pairedAt / 1000 | floor | strftime("%Y-%m-%d %H:%M UTC")),
-              "last seen " + (if (.lastSeenAt // 0) > 0 then (.lastSeenAt / 1000 | floor | strftime("%Y-%m-%d %H:%M UTC")) else "never" end)
+              "paired " + (.pairedAt | t),
+              if (.lastSeenAt // 0) > 0 then
+                "last seen " + (.lastSeenAt | t),
+                ({tailnet: "via Tailscale", private: "via the host port", loopback: "from the container",
+                  public: "via a public address"}[.lastSourceClass // ""] // "via an unknown address")
+              else "pairing code not used yet" end
             ] | join("  ") end' "$FILE"
 }
 
-remove() {
+# Prints the full id of the only device that matches.
+find_device() {
   prefix=${1:-}
   [[ "$prefix" =~ ^[0-9a-f-]{4,}$ ]] || { echo "Give the device id from the list, at least 4 characters." >&2; exit 1; }
   ids=$(jq -r --arg p "$prefix" '.[] | select(.deviceId | startswith($p)) | .deviceId' "$FILE" 2>/dev/null || true)
   case "$(printf '%s' "$ids" | grep -c .)" in
     0) echo "No device matches '$prefix'." >&2; exit 1 ;;
-    1) ;;
+    1) printf '%s\n' "$ids" ;;
     *) echo "'$prefix' matches several devices, give more characters." >&2; exit 1 ;;
   esac
-  # orca-serve removes it while Orca is stopped, so the running server cannot write it back.
-  printf '%s\n' "$ids" >"$RUN/unpair"
+}
+
+# orca-serve applies the change while Orca is stopped, so the running server cannot write the old list back.
+apply() { # change as JSON
+  printf '%s\n' "$1" >"$RUN/devices"
   orca-restart
   for _ in $(seq 60); do
-    [ -f "$RUN/unpair" ] || break
+    [ -f "$RUN/devices" ] || return 0
     sleep 1
   done
-  if jq -e --arg id "$ids" 'any(.[]; .deviceId == $id)' "$FILE" >/dev/null; then
+  echo "Orca did not restart, nothing changed." >&2
+  rm -f "$RUN/devices"
+  exit 1
+}
+
+remove() {
+  id=$(find_device "${1:-}")
+  apply "$(jq -nc --arg id "$id" '{op: "remove", id: $id}')"
+  if jq -e --arg id "$id" 'any(.[]; .deviceId == $id)' "$FILE" >/dev/null; then
     echo "The device is still paired." >&2
     exit 1
   fi
-  echo "Device ${ids:0:8} removed, its pairing code no longer works."
+  echo "Device ${id:0:8} removed, its pairing code no longer works."
+}
+
+rename() {
+  id=$(find_device "${1:-}")
+  name=$(printf '%s' "${2:-}" | tr -d '[:cntrl:]')
+  [ -n "$name" ] && [ "${#name}" -le 40 ] || { echo "Give a name of 1 to 40 characters." >&2; exit 1; }
+  apply "$(jq -nc --arg id "$id" --arg name "$name" '{op: "rename", id: $id, name: $name}')"
+  jq -e --arg id "$id" --arg name "$name" 'any(.[]; .deviceId == $id and .name == $name)' "$FILE" >/dev/null \
+    || { echo "The name did not change." >&2; exit 1; }
+  echo "Device ${id:0:8} is now '$name'."
 }
 
 case "${1:-}" in
   "") list ;;
   remove) remove "${2:-}" ;;
-  *) echo "Usage: orca-devices [remove <id>]" >&2; exit 1 ;;
+  rename) rename "${2:-}" "${3:-}" ;;
+  *) echo "Usage: orca-devices [remove <id> | rename <id> <name>]" >&2; exit 1 ;;
 esac

@@ -137,6 +137,7 @@ pull_image() {
 # Offline start keeps working with the last image. The store is private, so pruning cannot touch other images.
 update_image() {
   [ "$PULL" = 1 ] || return 0
+  echo "Pulling $IMAGE, a new image takes a few minutes..." >&2
   if pull_image; then
     pod tag "$IMAGE" orca-pods
     pod image prune -f >/dev/null

@@ -160,7 +160,14 @@ orca-server pair       # pairing codes for 127.0.0.1 and for the tailnet
 
 A local Orca on the same host pairs with the `127.0.0.1` code. Orca warns that the link points back to this device; turn on its option for an SSH tunnel, because the port is forwarded into the container in the same way. Remote clients and phones use the tailnet code.
 
-`orca-server status` lists the paired devices with their id, `orca-server unpair <id>` revokes one. Its pairing code stops working, open terminals in the container keep running.
+`orca-server status` lists the paired devices with their id, when they were last seen and how they connected: via the host port (the local Orca) or via Tailscale. Orca names every device `CLI <date>` and keeps no address or host name, so give each a name after pairing:
+
+```sh
+orca-server rename 1a2b laptop     # id or its first characters, from status
+orca-server unpair 1a2b            # revoke it, its pairing code stops working
+```
+
+Both restart Orca for a moment, open terminals in the container keep running.
 
 `orca-server` without arguments lists all commands, `orca-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
 
@@ -297,6 +304,7 @@ The image ships the current Node release. Extra major versions go into `PODS_NOD
 | Orca | Whenever you want | `orca-update` in a container terminal, terminals keep running |
 | Orca rollback | After a bad version | `orca-update <version>`, the previous version stays on disk |
 | Image | At boot, when newer | `orca-server start`, or pull ahead with `orca-server update` |
+| Extra Node versions, `PODS_TOOLS` | Whenever you want | `orca-server update` on a running server with the current image. After a new image it asks for a restart first |
 | Host script | When you release it | `orca-server self-update`, changes nothing without a valid signature |
 
 ### Data lifetime
