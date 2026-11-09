@@ -90,6 +90,18 @@ echo "OK    invalid device id rejected"
 SH
 ./op-server.sh status
 
+echo "--- Orca versions from the host"
+latest=$(pod exec --user dev orca-pods-server orca-update --check)
+./op-server.sh orca-update 1.4.241 >/dev/null
+./op-server.sh status | grep -qx "Orca: 1.4.241, $latest available. Switch with: op-server.sh orca-update" \
+  || { echo "FAIL  status after a rollback"; exit 1; }
+echo "OK    status shows the running and the available Orca"
+./op-server.sh orca-update >/dev/null
+./op-server.sh status | grep -qx "Orca: $latest, the latest version." || { echo "FAIL  status after orca-update"; exit 1; }
+echo "OK    orca-update switches to the latest Orca"
+if ./op-server.sh orca-update '1.4;id' >/dev/null 2>&1; then echo "FAIL  invalid version accepted"; exit 1; fi
+echo "OK    invalid version rejected"
+
 echo "--- the server does not start without a firewall"
 ./op-server.sh stop >/dev/null
 if PODS_SOURCED=1 sh -c '. ./op-server.sh; firewall_rules() { echo broken; }; prepare_store; start_server' >/dev/null 2>&1; then
@@ -106,6 +118,9 @@ sleep 1
 pod exec --user dev orca-pods-server sh -c 'for i in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q "\"state\": \"ready\"" && break; sleep 2; done; orca-ide status --json | jq -r .result.runtime.appVersion; test -d "$HOME/proj"'
 test "$(pod exec orca-pods-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
 echo "OK    fixed machine id, a new image does not leave a foreign Orca lock"
+./op-server.sh restart >/dev/null
+[ "$(pod container inspect --format '{{.State.Running}}' orca-pods-server)" = true ] || { echo "FAIL  restart"; exit 1; }
+echo "OK    restart"
 ./op-server.sh stop
 ip -br link | grep -q "^br-orca-pods" && { echo "FAIL  br-orca-pods left behind"; exit 1; }
 echo "RESULT e2e: all OK"

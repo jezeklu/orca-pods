@@ -3,16 +3,19 @@
 #   orca-update              latest version
 #   orca-update 1.4.251      a specific version, also the way back
 #   orca-update --no-restart install only, do not restart the server
+#   orca-update --check      print the latest version, change nothing
 set -euo pipefail
 APP=$HOME/.local/share/orca-server
 REPO=https://github.com/stablyai/orca/releases
 restart=1
+check=0
 want=""
 for arg in "$@"; do
   case "$arg" in
     --no-restart) restart=0 ;;
+    --check) check=1 ;;
     [0-9]*) want=$arg ;;
-    *) echo "Usage: orca-update [version] [--no-restart]" >&2; exit 1 ;;
+    *) echo "Usage: orca-update [version] [--no-restart] [--check]" >&2; exit 1 ;;
   esac
 done
 
@@ -21,6 +24,7 @@ yml=$(curl -fsSL --retry 3 "$url")
 version=$(awk '/^version:/{print $2}' <<<"$yml")
 sum=$(awk '/^sha512:/{print $2}' <<<"$yml")
 [ -n "$version" ] && [ -n "$sum" ] || { echo "Cannot read the release description." >&2; exit 1; }
+[ "$check" = 0 ] || { echo "$version"; exit 0; }
 
 mkdir -p "$APP"
 previous=$(readlink "$APP/current" 2>/dev/null || true)

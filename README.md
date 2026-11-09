@@ -217,7 +217,7 @@ mkdir -p ~/.config/orca-pods
 curl -fsSL -o ~/.config/orca-pods/server.env https://raw.githubusercontent.com/jezeklu/orca-pods/main/server.env.example
 ```
 
-Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later changes apply at the next start: `op-server stop && op-server start`.
+Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later changes apply at the next start: `op-server restart`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -331,12 +331,20 @@ Other versions and languages live in `/home/dev/.local/share/mise` and survive a
 
 ### Updates
 
+```sh
+op-server update        # pulls the image, updates PODS_RUNTIMES and PODS_TOOLS, says what is left
+op-server restart       # only after a new image: a short outage, the start installs the rest
+op-server orca-update   # only when a newer Orca is available, terminals keep running
+```
+
+`update` changes nothing that would interrupt work. It ends with the running and the latest Orca version and the steps left, in this order. `status` shows the Orca versions too. The image and Orca are separate: an image never brings an Orca version, Orca lives in the container home and changes only through `orca-update`.
+
 | What | When | How |
 |---|---|---|
-| Orca | Whenever you want | `orca-update` in a container terminal, terminals keep running |
-| Orca rollback | After a bad version | `orca-update <version>`, the previous version stays on disk |
-| Image | At boot, when newer | `op-server start`, or pull ahead with `op-server update` |
-| `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `op-server update` on a running server with the current image. After a new image it asks for a restart first |
+| Image | At boot, when newer | `op-server update` pulls it ahead, `op-server restart` switches to it |
+| `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `op-server update` on a running server with the current image, after a new image the restart installs them |
+| Orca | Whenever you want | `op-server orca-update`, or `orca-update` in a container terminal |
+| Orca rollback | After a bad version | `op-server orca-update <version>`, the previous version stays on disk |
 | Host script | When you release it | `op-server self-update`, changes nothing without a valid signature |
 
 ### Data lifetime

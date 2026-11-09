@@ -5,12 +5,14 @@
 #   op-server install           set everything up and start the server at boot
 #   op-server uninstall         remove the service, keep the data
 #   op-server start | stop      start or stop the server
+#   op-server restart           stop and start, picks up a new image and settings
 #   op-server login             log the server in to Tailscale
-#   op-server status            server status and paired devices
+#   op-server status            server status, Orca versions and paired devices
 #   op-server pair [--mobile]   print pairing codes
 #   op-server unpair <id>       revoke a paired device, its id is in status
 #   op-server rename <id> <name>  name a paired device
-#   op-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS
+#   op-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS, report what is left
+#   op-server orca-update [version]  switch Orca to the latest or the given version, terminals survive
 #   op-server self-update       replace this script, only with a validly signed release
 #   op-server test [URL]        isolation tests, without data and only while the server is stopped
 #   op-server cleanup           manual cleanup after a crash
@@ -167,12 +169,36 @@ tailscale_state() {
     | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p'
 }
 
+orca_running() {
+  pod exec --user dev orca-pods-server sh -c 'orca-ide status --json 2>/dev/null' \
+    | sed -n 's/.*"appVersion": *"\([^"]*\)".*/\1/p'
+}
+
+# Empty when GitHub cannot be reached or the image is older than this script.
+orca_latest() {
+  pod exec --user dev orca-pods-server orca-update --check 2>/dev/null || true
+}
+
+# One line on the Orca versions, with the command when a newer one exists.
+orca_versions() {
+  now=$(orca_running || true)
+  latest=$(orca_latest)
+  if [ -z "$now" ]; then
+    echo "Orca: not ready yet${latest:+, $latest available}."
+  elif [ -z "$latest" ]; then
+    echo "Orca: $now, the latest version is unknown."
+  elif [ "$now" = "$latest" ]; then
+    echo "Orca: $now, the latest version."
+  else
+    echo "Orca: $now, $latest available. Switch with: $prog orca-update"
+  fi
+}
+
 show_status() {
   if ! running; then echo "The server is not running."; return 1; fi
   echo "Server running on 127.0.0.1:$PORT."
   echo "Tailscale: $(tailscale_state || true)"
-  pod exec --user dev orca-pods-server sh -c 'orca-ide status --json 2>/dev/null' \
-    | sed -n 's/.*"appVersion": *"\([^"]*\)".*/Orca: \1/p'
+  orca_versions
   echo "Paired devices:"
   if devices=$(pod exec --user dev orca-pods-server orca-devices 2>/dev/null); then
     printf '%s\n' "$devices" | sed 's/^/  /'
@@ -193,6 +219,20 @@ rename_device() {
   pod exec --user dev orca-pods-server orca-devices rename "$1" "$2"
 }
 
+orca_update() {
+  require_running
+  case "${1:-}" in
+    *[!0-9.]*|.*|*.|*..*) echo "Usage: $prog orca-update [version such as 1.4.255]" >&2; exit 1 ;;
+  esac
+  echo "Installing Orca ${1:-latest}, terminals keep running..."
+  pod exec --user dev orca-pods-server orca-update ${1:+"$1"}
+}
+
+restart_server() {
+  ! running || teardown
+  start_server
+}
+
 tailscale_login() {
   require_running
   pod exec orca-pods-server tailscale up "--hostname=orca-pods-$INSTANCE" \
@@ -210,17 +250,20 @@ pairing() {
   echo "Local Orca warns that the 127.0.0.1 link points back to this device. Turn on its SSH tunnel option: the port is forwarded into the container." >&2
 }
 
+# Everything that needs no downtime, then the steps left in the order they should run.
 update_all() {
   old=""
   ! running || old=$(pod inspect -f '{{.Image}}' orca-pods-server)
   PULL=1 update_image
   if [ -z "$old" ]; then
-    echo "The server is not running, the image is used at the next start."
+    echo "The server is not running, the image is used at the next start: $prog start"
     return 0
   fi
   # Helpers of an older image do not know the current options, so they run only from the new one.
   if [ "$old" != "$(pod image inspect -f '{{.Id}}' orca-pods)" ]; then
-    echo "New image ready. Restart to use it, the start installs the rest: $prog stop && $prog start"
+    echo "New image ready, the restart installs the rest."
+    orca_versions
+    echo "Next: $prog restart, then $prog orca-update when a newer Orca is available."
     return 0
   fi
   echo "The image is up to date."
@@ -230,7 +273,7 @@ update_all() {
   [ -z "$TOOLS" ] || echo "Updating $TOOLS..."
   # shellcheck disable=SC2086 # list of tools
   [ -z "$TOOLS" ] || pod exec --user dev orca-pods-server orca-tools --update $TOOLS
-  echo "Done."
+  orca_versions
 }
 
 # Signature first, the new file is never run before it. The trusted key stays on the host,
@@ -419,15 +462,17 @@ main() {
     uninstall) uninstall_server ;;
     start) start_server ;;
     stop|cleanup) teardown ;;
+    restart) restart_server ;;
     status) show_status ;;
     login) tailscale_login ;;
     pair) shift; pairing "$@" ;;
     unpair) shift; unpair "$@" ;;
     rename) shift; rename_device "$@" ;;
     update) update_all ;;
+    orca-update) shift; orca_update "$@" ;;
     self-update) self_update ;;
     test) shift; run_tests "$@" ;;
-    *) echo "Usage: $prog [install|uninstall|start|stop|status|login|pair|unpair|rename|update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Usage: $prog [install|uninstall|start|stop|restart|status|login|pair|unpair|rename|update|orca-update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
   esac
 }
 
