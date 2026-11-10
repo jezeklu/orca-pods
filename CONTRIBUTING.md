@@ -2,6 +2,10 @@
 
 Everything in the repository is in English: code, comments, script output, documentation and commit messages.
 
+## Branches
+
+Nothing is committed to `main` directly. Each feature or fix gets its own branch from `main`, named `<type>/<short-name>`, for example `feat/help`, and reaches `main` through a pull request once the tests pass. A pull request is merged as a fast-forward, so the signed commits stay as they are.
+
 ## Commit messages
 
 [Conventional Commits](https://www.conventionalcommits.org/):

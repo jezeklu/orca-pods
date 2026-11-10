@@ -51,3 +51,5 @@ Tests download images and Orca releases. Run only code you have reviewed, and ne
 ## Commits
 
 [Conventional Commits](https://www.conventionalcommits.org/) as described in [CONTRIBUTING.md](CONTRIBUTING.md), for example `fix(server): retry the restart right after start`. Do not commit, push, tag or publish releases unless the maintainer asks.
+
+Never commit to `main`. Each change gets its own branch from the current `main` before the first commit, named after its type, for example `feat/help` or `fix/server-unit`. It reaches `main` only through a pull request, after the tests pass and the maintainer approves the merge. If you find yourself on `main` with uncommitted changes, move them to a new branch first.
