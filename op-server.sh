@@ -1,26 +1,6 @@
 #!/bin/sh
 # Isolated Orca server in a rootless container.
-#
-# Usage:
-#   op-server install           set everything up and start the server at boot
-#   op-server uninstall         remove the service, keep the data
-#   op-server start | stop      start or stop the server
-#   op-server restart           stop and start, picks up a new image and settings
-#   op-server login             log the server in to Tailscale
-#   op-server shell [-- command]  a shell as dev in the running server
-#   op-server status            server status, Orca versions and paired devices
-#   op-server pair [--mobile]   print pairing codes
-#   op-server unpair <id>       revoke a paired device, its id is in status
-#   op-server rename <id> <name>  name a paired device
-#   op-server update            pull a new image, update PODS_RUNTIMES and PODS_TOOLS, report what is left
-#   op-server orca-update [version]  switch Orca to the latest or the given version, terminals survive
-#   op-server self-update       replace this script, only with a validly signed release
-#   op-server test [URL]        isolation tests, without data and only while the server is stopped
-#   op-server cleanup           manual cleanup after a crash
-#   op-server doctor            check requirements
-#   op-server packages          print the command that installs the packages
-#
-# Settings: ~/.config/orca-pods/server.env, see server.env.example.
+# Run it with help for the commands.
 
 ROLE=server
 # @include common.sh
@@ -460,8 +440,55 @@ run_tests() {
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }
 }
 
+usage() {
+  cat <<USAGE
+$prog: an isolated Orca server in a rootless Podman container.
+
+Setup
+  install             Check requirements, create the settings and the secrets folder,
+                      pull the image, install the latest Orca and start the server
+                      through its systemd unit, also at boot.
+  uninstall           Stop the server and remove its unit. Projects, Orca, pairings
+                      and the Tailscale login stay in the store.
+  login               Log the server in to Tailscale as orca-pods-$INSTANCE.
+
+Running
+  start | stop        Start or stop the server. Start loads the firewall first and
+                      refuses to run without it.
+  restart             Stop and start. Picks up a new image and changed settings.
+  status              Whether it runs, Tailscale, Orca versions, paired devices.
+  shell [-- CMD]      A shell as dev in the running server, or run CMD there.
+
+Devices
+  pair [--mobile]     Print pairing codes for the local port and Tailscale.
+  unpair ID           Revoke a paired device. IDs are in status.
+  rename ID NAME      Name a paired device.
+
+Updates
+  update              Pull a new image, update PODS_RUNTIMES and PODS_TOOLS,
+                      then print the steps left, such as restart and orca-update.
+  orca-update [VER]   Switch Orca to the latest or the given version. Terminals
+                      keep running, the previous version stays for a rollback.
+  self-update         Replace this script with the latest release, only when its
+                      signature matches allowed_signers next to the settings.
+
+Maintenance
+  test [URL]          Isolation tests while the server is stopped, no data used.
+  cleanup             Remove leftovers after a crash.
+  doctor              Check the requirements of this machine.
+  packages            Print the command that installs the missing packages.
+  help                This help.
+
+Settings  $CONFIG
+          PODS_SECRETS_DIR, PODS_PORT, PODS_INSTANCE, PODS_RUNTIMES, PODS_TOOLS, ...
+Data      $STORE
+More      https://github.com/jezeklu/orca-pods#readme
+USAGE
+}
+
 main() {
   case "${1:-}" in
+    ""|help|-h|--help) usage; return ;;
     doctor) doctor; return ;;
     packages) packages_cmd; return ;;
   esac
@@ -483,7 +510,7 @@ main() {
     orca-update) shift; orca_update "$@" ;;
     self-update) self_update ;;
     test) shift; run_tests "$@" ;;
-    *) echo "Usage: $prog [install|uninstall|start|stop|restart|status|login|shell|pair|unpair|rename|update|orca-update|self-update|test|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Unknown command: $1. Run: $prog help" >&2; exit 1 ;;
   esac
 }
 

@@ -1,19 +1,6 @@
 #!/bin/sh
 # Isolated Orca client: starts Orca in a rootless container and undoes everything when it exits.
-#
-# Usage:
-#   op-client install   check requirements, create the settings and the vault, install the latest Orca
-#   op-client           start Orca, the first start installs the latest Orca
-#   op-client login     log the running client in to Tailscale, from a second terminal
-#   op-client orca-update [version]  switch to the latest or the given Orca while the client is closed
-#   op-client status    Orca versions of the client and, while it runs, of the paired servers
-#   op-client shell [-- command]  a shell in the vault while the client is closed, asks for the password
-#   op-client uninstall remove images and Orca, keep the settings and the vault
-#   op-client cleanup   manual cleanup after a crash or kill -9
-#   op-client doctor    check requirements
-#   op-client packages  print the command that installs the packages
-#
-# Settings: ~/.config/orca-pods/client.env, see client.env.example.
+# Run it with help for the commands.
 
 ROLE=client
 # @include common.sh
@@ -271,8 +258,45 @@ tailscale_login() {
     --advertise-tags=tag:orca-client --accept-dns=false --shields-up
 }
 
+usage() {
+  cat <<USAGE
+$prog: Orca in a rootless Podman container, with its data in an encrypted vault.
+Everything it starts is removed when Orca exits.
+
+  (no command)        Start Orca. Asks for the vault password, loads the firewall,
+                      and on the first start installs the latest Orca.
+  install             Check requirements, create the settings and the vault (asks
+                      for a new password), pull the image and install Orca.
+  uninstall           Remove the image and the installed Orca. The settings and
+                      the vault stay.
+
+While the client runs, from a second terminal
+  login               Log the client in to Tailscale as orca-pods-$INSTANCE.
+  status              Orca versions of the client and of the paired servers.
+
+While the client is closed
+  status              Orca version of the client.
+  orca-update [VER]   Switch to the latest or the given Orca, for example the
+                      version a server runs. The previous version stays.
+  shell [-- CMD]      Open the vault and start a shell in it with no network,
+                      or run CMD. The vault locks again on exit.
+
+Maintenance
+  cleanup             Remove leftovers after a crash or kill -9.
+  doctor              Check the requirements of this machine.
+  packages            Print the command that installs the missing packages.
+  help                This help.
+
+Settings  $CONFIG
+          PODS_VAULT_BASE: the folder with the vault
+Data      $STORE (image, Orca), the vault in PODS_VAULT_BASE
+More      https://github.com/jezeklu/orca-pods#readme
+USAGE
+}
+
 main() {
   case "${1:-}" in
+    help|-h|--help) usage; return ;;
     doctor) doctor gocryptfs; return ;;
     packages) packages_cmd gocryptfs; return ;;
   esac
@@ -287,7 +311,7 @@ main() {
     orca-update) shift; orca_update "$@" ;;
     status) show_status ;;
     cleanup) teardown ;;
-    *) echo "Usage: $prog [install|login|status|orca-update|shell|uninstall|cleanup|doctor|packages]" >&2; exit 1 ;;
+    *) echo "Unknown command: $1. Run: $prog help" >&2; exit 1 ;;
   esac
 }
 

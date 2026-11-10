@@ -111,6 +111,22 @@ rm -f "$tmp/rel/op-server.sig"
 ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/op-server" </dev/null
 su_update; ok "unknown key rejected" $? 1
 
+# Every command main dispatches is described in help, so the help does not fall behind.
+for role in server client; do
+  help=$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" "./op-$role.sh" help)
+  ok "op-$role help" $? 0
+  missing=""
+  for cmd in $(sed -n '/^main() {/,/^}/s/^    \([a-z|-]*\)).*/\1/p' "op-$role.sh" | tr '|' ' '); do
+    case $cmd in -*) continue ;; esac
+    printf '%s\n' "$help" | grep -Eq "^  ([a-z-]+ \| )?$cmd( |$)" || missing="$missing $cmd"
+  done
+  ok "op-$role help lists every command" "$missing" ""
+  err=$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" "./op-$role.sh" no-such-command 2>&1 >/dev/null)
+  ok "op-$role unknown command" $? 1
+  # As root, the refusal to run with sudo comes first.
+  [ "$(id -u)" -eq 0 ] || ok "op-$role unknown command message" "$err" "Unknown command: no-such-command. Run: op-$role.sh help"
+done
+
 if command -v shellcheck >/dev/null; then
   shellcheck -x -S warning -e SC1091,SC2034 op-client.sh op-server.sh dev.sh build.sh test.sh sign-release.sh lib/common.sh tests/*.sh server/bin/[a-z]* image/bin/[a-z]*
   ok "shellcheck" $? 0

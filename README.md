@@ -209,7 +209,7 @@ op-server unpair 1a2b            # revoke it, its pairing code stops working
 
 Both restart Orca for a moment, open terminals in the container keep running.
 
-`op-server` without arguments lists all commands, `op-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
+`op-server help` or `op-server` without arguments describes all commands, `op-client help` those of the client. `op-server uninstall` removes the service and keeps the data. When the distribution does not allow start at boot without `sudo`, `install` prints the `loginctl enable-linger` command.
 
 ### Configuration
 
