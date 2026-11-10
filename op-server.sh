@@ -316,7 +316,7 @@ write_unit() {
   self=$(readlink -f "$0")
   cat >"$UNIT" <<UNITFILE
 [Unit]
-Description=Orca server $INSTANCE
+Description=orca-pods server (instance $INSTANCE)
 Wants=network-online.target
 After=network-online.target
 
@@ -328,7 +328,8 @@ Environment=PODS_INSTANCE=$INSTANCE
 ExecStart=$self start
 ExecStop=$self stop
 TimeoutStartSec=900
-KillMode=none
+# Podman moves the containers into their own scopes, only leftovers of the scripts stay here.
+KillMode=mixed
 
 [Install]
 WantedBy=default.target
@@ -344,11 +345,12 @@ install_server() {
     SECRETS=$DEFAULT_SECRETS
   fi
   [ -d "$SECRETS" ] || { mkdir -p "$SECRETS"; chmod 700 "$SECRETS"; }
-  start_server
-  pod exec --user dev orca-pods-server orca-update --no-restart
   write_unit
   systemctl --user daemon-reload
   systemctl --user enable "orca-pods-$INSTANCE.service"
+  # Started by systemd, so it knows the server runs and stops it at shutdown.
+  systemctl --user start "orca-pods-$INSTANCE.service"
+  pod exec --user dev orca-pods-server orca-update --no-restart
   if ! loginctl enable-linger "$(id -un)" 2>/dev/null; then
     echo "Start at boot needs sudo here. Run: sudo loginctl enable-linger $(id -un)"
   fi

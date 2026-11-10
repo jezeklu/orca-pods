@@ -16,7 +16,10 @@ CFG
 export PODS_CONFIG="$cfg"
 ./op-server.sh install
 [ "$(systemctl --user is-enabled orca-pods-server-test.service)" = enabled ]
-./op-server.sh stop
+[ "$(systemctl --user is-active orca-pods-server-test.service)" = active ]
+grep -qx 'KillMode=mixed' "$HOME/.config/systemd/user/orca-pods-server-test.service"
+systemctl --user stop orca-pods-server-test.service
+PODS_SOURCED=1 sh -c '. ./op-server.sh; prepare_store; ! running'
 systemctl --user start orca-pods-server-test.service
 systemctl --user is-active orca-pods-server-test.service
 ./op-server.sh status

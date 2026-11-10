@@ -366,7 +366,14 @@ op-server orca-update   # only when a newer Orca is available, terminals keep ru
 
 ### Release signing
 
-On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/op-server`, `dist/op-server.sig` and `dist/op-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers` as `orca-pods ssh-ed25519 …`. The container never sees this file, so code written in the container cannot reach the host unsigned.
+On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/op-server`, `dist/op-server.sig` and `dist/op-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers`. For the releases of this repository it is:
+
+```sh
+mkdir -p ~/.config/orca-pods
+echo 'orca-pods ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDXHD6ZeJbRTkk/Fz7VdrTl0q2ClEHgGQc8dhssmRAKv' >~/.config/orca-pods/allowed_signers
+```
+
+Its fingerprint is `SHA256:WKyUvoglDCAUU5y5ihiclriRkC22NoJ7nD4UOBT85oI`. Releases signed with your own key need your own line instead. The container never sees this file, so code written in the container cannot reach the host unsigned.
 
 ### Server security boundary
 
