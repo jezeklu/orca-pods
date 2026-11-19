@@ -103,6 +103,9 @@ run_tests() {
   check "host" block "http://$hostip:18767"
   check "bridge" block "http://$brgw"
   check "host map 169.254.1.2" block "http://169.254.1.2:18767"
+  targets=$(host_443_targets "$hostip")
+  [ -n "$targets" ] || echo "SKIP  no other host address answers on 443"
+  n=0; for a in $targets; do n=$((n + 1)); check "host address $n on 443" block "http://$a:443"; done
   [ -z "$ctl" ] || check "control target" block $ctl
   check "http example.com" block http://example.com
   check "https tailscale.com" pass https://tailscale.com
@@ -130,6 +133,7 @@ run_tests() {
   pod unshare --rootless-netns nft delete table inet orca_pods
   check "no fw: http example.com" pass http://example.com
   check "no fw: host map" pass "http://169.254.1.2:18767"
+  n=0; for a in $targets; do n=$((n + 1)); check "no fw: host address $n on 443" pass "http://$a:443"; done
   [ -z "$ctl" ] || check "no fw: control target" pass $ctl
 
   kill "$srvpid" 2>/dev/null || true

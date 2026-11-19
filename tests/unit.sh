@@ -182,6 +182,17 @@ init_path=$(sed -n 's/^PATH=\(.*\)$/\1/p' server/bin/orca-server-init)
 case ":$init_path:" in :/*:) case "$init_path" in *home*) r=bad ;; *) r=ok ;; esac ;; *) r=bad ;; esac
 ok "orca-server-init sets a PATH without the home" "$r" ok
 
+# Own addresses of the host go into a drop rule of their own, before any accept.
+host_addresses() { printf '%s\n' 203.0.113.7 198.51.100.9; }
+rules=$(firewall_rules)
+case "$rules" in *'ip daddr { 203.0.113.7, 198.51.100.9 } drop'*'tcp dport 443 accept'*) r=ok ;; *) r=bad ;; esac
+ok "firewall: host addresses dropped before the accepts" "$r" ok
+host_addresses() { :; }
+case "$(firewall_rules)" in *'{  }'*|*'{ }'*) r=bad ;; *) r=ok ;; esac
+ok "firewall: no empty set without host addresses" "$r" ok
+. lib/common.sh
+set +e
+
 ./build.sh
 for f in dist/op-*; do
   case "$f" in *.sig) continue ;; esac

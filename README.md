@@ -182,6 +182,7 @@ Not protected:
 - The Chromium sandbox is off (`--no-sandbox`), the container is the boundary for the built-in browser.
 - Credentials in the profile are stored unencrypted and protected only by the vault, which stays unlocked while the client runs.
 - Internet: TCP 443 and UDP are allowed, so data can leave. The firewall cannot tell public addresses routed through a VPN apart.
+- Own addresses of the host, a public one included, are blocked as they were at start. An address the host gets later, for example a new one from DHCP, is reachable on 443 and UDP until the next start.
 
 After `kill -9` of the script the client keeps running and the vault stays unlocked, run `op-client cleanup`.
 

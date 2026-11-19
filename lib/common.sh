@@ -74,7 +74,24 @@ ns_to_host() { # uid_map lines on stdin
   awk -v id="$DEV_IN_NS" '$1 <= id && id < $1 + $3 { print $2 + id - $1; found = 1; exit } END { exit !found }'
 }
 
+# Global IPv4 addresses of the host, read once at start. IPv6 is dropped as a whole.
+host_addresses() {
+  ip -4 -o addr show scope global | awk '{ sub("/.*", "", $4); print $4 }' | sort -u
+}
+
+# For the isolation tests: host addresses with a service on 443, which the firewall otherwise lets through.
+# Not the one pasta copies into the namespace (argument), traffic to it never leaves.
+host_443_targets() { # address-of-the-default-route
+  for a in $(host_addresses); do
+    [ "$a" != "$1" ] || continue
+    ! curl -sS -m 3 -o /dev/null "http://$a:443/" 2>/dev/null || echo "$a"
+  done
+}
+
+# The own addresses of the host get a rule of their own: a public one is in no private range, and
+# nft refuses overlapping elements in one set.
 firewall_rules() {
+  own=$(host_addresses | paste -sd, - | sed 's/,/, /g')
   cat <<'NFT'
 destroy table inet orca_pods
 
@@ -88,6 +105,9 @@ table inet orca_pods {
       172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15,
       224.0.0.0/4, 240.0.0.0/4
     } drop
+NFT
+  [ -z "$own" ] || echo "    ip daddr { $own } drop"
+  cat <<'NFT'
     tcp dport 443 accept
     meta l4proto udp accept
     drop

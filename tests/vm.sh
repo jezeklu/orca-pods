@@ -63,6 +63,11 @@ case "$ID" in
 esac
 grep -q "^$(id -un):" /etc/subuid ||
   sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(id -un)"
+# A public address of the host, which the drop list of private ranges does not cover.
+sudo ip link add pods-public type dummy
+sudo ip addr add 203.0.113.7/32 dev pods-public
+sudo ip link set pods-public up
+sudo sh -c "python3 -m http.server 443 --bind 203.0.113.7 </dev/null >/dev/null 2>&1 &"
 # The user manager started before the packages, it has to pick up the session bus.
 sudo systemctl restart "user@$(id -u).service"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"

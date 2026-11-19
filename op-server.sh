@@ -367,12 +367,13 @@ report() { # ok? name
 check() { # name expected(pass|block) curl-args...
   name=$1; want=$2; shift 2
   if root_exec curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
-  [ "$got" = "$want" ]; report $? "$name ($got)"
+  # Not "report $?": under set -e a failed test would end the run before its FAIL line.
+  if [ "$got" = "$want" ]; then report 0 "$name ($got)"; else report 1 "$name ($got)"; fi
 }
 
 inside() { # name shell-code that must succeed
   name=$1; shift
-  pod exec --user dev orca-pods-server sh -c "$1" >/dev/null 2>&1; report $? "$name"
+  if pod exec --user dev orca-pods-server sh -c "$1" >/dev/null 2>&1; then report 0 "$name"; else report 1 "$name"; fi
 }
 
 # Runs on throwaway directories. The positive check switches the firewall off, so no data may be in reach.
@@ -430,6 +431,9 @@ run_tests() {
   check "host map 169.254.1.2" block "http://169.254.1.2:18767"
   check "host 5432" block "http://169.254.1.2:5432"
   check "host 6768" block "http://169.254.1.2:6768"
+  targets=$(host_443_targets "$hostip")
+  [ -n "$targets" ] || echo "SKIP  no other host address answers on 443"
+  n=0; for a in $targets; do n=$((n + 1)); check "host address $n on 443" block "http://$a:443"; done
   [ -z "$ctl" ] || check "control target" block $ctl
   check "http example.com" block http://example.com
   check "https npm" pass https://registry.npmjs.org
@@ -463,6 +467,7 @@ run_tests() {
   pod unshare --rootless-netns nft delete table inet orca_pods
   check "no fw: http example.com" pass http://example.com
   check "no fw: host map" pass "http://169.254.1.2:18767"
+  n=0; for a in $targets; do n=$((n + 1)); check "no fw: host address $n on 443" pass "http://$a:443"; done
   [ -z "$ctl" ] || check "no fw: control target" pass $ctl
 
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }
