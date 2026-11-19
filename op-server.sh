@@ -60,7 +60,7 @@ check_secrets() {
 # Read access for dev only, the default ACL covers files added later.
 # setfacl -R does not follow symlinks, a link in there grants nothing.
 grant_secrets() {
-  uid=$(dev_host_uid)
+  uid=$(dev_host_uid) || return 1
   setfacl -R -m "u:$uid:rX" "$SECRETS" \
     && find "$SECRETS" -type d -exec setfacl -d -m "u:$uid:rX" {} + \
     || { echo "Cannot set ACLs on $SECRETS, it must be on a local file system." >&2; return 1; }

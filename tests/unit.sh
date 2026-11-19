@@ -90,6 +90,40 @@ for want in 'iifname "br-orca-pods" drop' 'tcp dport 443 accept' '192.168.0.0/16
   case "$rules" in *"$want"*) r=ok ;; *) r=bad ;; esac; ok "firewall: $want" "$r" ok
 done
 
+# Host UID of dev, namespace ID 30101: from the running user namespace, else /etc/subuid in file order.
+me=$(id -un)
+host_uid() { # subuid-lines live-map
+  printf '%b\n' "$1" >"$tmp/subuid"
+  ( SUBUID_FILE=$tmp/subuid; LIVE_MAP=$2
+    pod() { [ "$*" = "unshare cat /proc/self/uid_map" ] && [ -n "$LIVE_MAP" ] && printf '%b\n' "$LIVE_MAP"; }
+    dev_host_uid 2>/dev/null )
+}
+ok "subuid: one line" "$(host_uid "$me:100000:65536" '')" 130100
+ok "subuid: two adjacent lines" "$(host_uid "$me:100000:65536\n$me:165536:100000" '')" 130100
+ok "subuid: first line shorter than 30101 IDs" "$(host_uid "$me:100000:30000\n$me:200000:65536" '')" 200100
+ok "subuid: lines of other users skipped" "$(host_uid "other:100000:65536\n$me:165536:65536" '')" 195636
+ok "subuid: line by UID" "$(host_uid "$(id -u):100000:65536" '')" 130100
+ok "subuid: live map wins" "$(host_uid "$me:100000:65536" "0 $(id -u) 1\n1 300000 20000\n20001 400000 65536")" 410100
+ok "subuid: live map without dev falls back" "$(host_uid "$me:100000:65536" "0 $(id -u) 1\n1 300000 1000")" 130100
+ok "subuid: too few IDs" "$(host_uid "$me:100000:30000" ''; echo " $?")" " 1"
+ok "subuid: no line" "$(host_uid "other:100000:65536" ''; echo " $?")" " 1"
+
+# Without a host UID for dev, nothing gets an ACL: setfacl with an empty user changes the owner entry.
+acl_log=$tmp/acl.log
+: >"$acl_log"
+mkdir -p "$tmp/acl-secrets"
+ACL_LOG=$acl_log ACL_DIR=$tmp PODS_SOURCED=1 sh -c '. ./op-server.sh; set +e
+  dev_host_uid() { return 1; }; setfacl() { echo "$*" >>"$ACL_LOG"; }
+  SECRETS=$ACL_DIR/acl-secrets; grant_secrets' >/dev/null 2>&1
+ok "server: no UID, grant_secrets fails" $? 1
+mkdir -p "$tmp/acl-run"
+ACL_LOG=$acl_log ACL_DIR=$tmp PODS_SOURCED=1 sh -c '. ./op-client.sh; set +e
+  dev_host_uid() { return 1; }; setfacl() { echo "$*" >>"$ACL_LOG"; }; getfacl() { :; }
+  AUDIO=1; PULSE_SOCK=$ACL_DIR/sock; RUNROOT=$ACL_DIR/acl-run; share_audio' >/dev/null 2>&1
+ok "client: no UID, share_audio fails" $? 1
+ok "no ACL set without a UID" "$(cat "$acl_log")" ""
+ok "client: every ACL checks the UID" "$(grep -n 'setfacl.*\$(dev_host_uid)' op-client.sh op-server.sh)" ""
+
 # The PATH of the server image starts in the home of dev, so root must not inherit it.
 bad=$(grep -n 'pod exec' op-server.sh | grep -v -e '--user dev' -e '^[0-9]*:root_exec() {' -e '^[0-9]*: *pod exec --env "PATH=\$ROOT_PATH" ')
 ok "every exec as root sets its PATH" "$bad" ""

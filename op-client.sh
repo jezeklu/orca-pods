@@ -70,8 +70,9 @@ check_requirements() {
 # Does nothing without PODS_AUDIO=1. Needs the runroot for the saved ACL.
 share_audio() {
   [ "$AUDIO" = 1 ] || return 0
+  uid=$(dev_host_uid) || return 1
   getfacl -cp "$PULSE_SOCK" >"$RUNROOT/pulse.acl"
-  setfacl -m "u:$(dev_host_uid):rwx" "$PULSE_SOCK"
+  setfacl -m "u:$uid:rwx" "$PULSE_SOCK"
 }
 
 # Downloads and extracts in the container behind the firewall, the host never runs the AppImage.
@@ -246,10 +247,11 @@ run_client() {
   pod unshare test -d "$OPEN/home" || { echo "The vault has no home directory, see README." >&2; exit 1; }
   pod unshare test -d "$OPEN/state" || { echo "The vault has no state directory, see README." >&2; exit 1; }
 
+  uid=$(dev_host_uid) || exit 1
   mkdir -p "$RUNROOT"
   getfacl -cp "$SOCK" >"$RUNROOT/wayland.acl"
-  setfacl -m "u:$(dev_host_uid):rwx" "$SOCK"
-  share_audio
+  setfacl -m "u:$uid:rwx" "$SOCK"
+  share_audio || exit 1
   set --
   [ "$AUDIO" = 0 ] || set -- -e PULSE_SERVER=unix:/pulse/native --mount "type=bind,src=$PULSE_SOCK,dst=/pulse/native"
 

@@ -58,10 +58,20 @@ prepare_store() {
 # dev in a user namespace of the store: container UID n is n + 1, see --uidmap.
 DEV_IN_NS=30101
 
-# dev (UID 30100 in the container, see --uidmap) as seen by the host.
+# dev (UID 30100 in the container, see --uidmap) as seen by the host. The running user namespace
+# comes first: the ACLs must match it, and it stays older than /etc/subuid until the pause process ends.
+# Otherwise the lines of the user in file order, the way Podman builds the map.
+SUBUID_FILE=/etc/subuid
 dev_host_uid() {
-  start=$(awk -F: -v u="$(id -un)" '$1 == u { print $2 }' /etc/subuid)
-  echo $((start + 30100))
+  pod unshare cat /proc/self/uid_map 2>/dev/null | ns_to_host && return 0
+  awk -F: -v u="$(id -un)" -v n="$(id -u)" 'BEGIN { at = 1 } $1 == u || $1 == n { print at, $2, $3; at += $3 }' \
+    "$SUBUID_FILE" | ns_to_host && return 0
+  echo "Cannot find the host UID of dev: $SUBUID_FILE needs at least $DEV_IN_NS subordinate IDs for $(id -un)." >&2
+  return 1
+}
+
+ns_to_host() { # uid_map lines on stdin
+  awk -v id="$DEV_IN_NS" '$1 <= id && id < $1 + $3 { print $2 + id - $1; found = 1; exit } END { exit !found }'
 }
 
 firewall_rules() {
