@@ -57,6 +57,15 @@ done
 ( PODS_SOURCED=1 PODS_RUNTIMES='node@24 python@3.13 go@1.25' sh -c '. ./op-server.sh' ) >/dev/null 2>&1
 ok "PODS_RUNTIMES list accepted" $? 0
 
+for audio in 2 yes ' '; do
+  ( PODS_SOURCED=1 PODS_AUDIO=$audio sh -c '. ./op-client.sh' ) >/dev/null 2>&1
+  ok "PODS_AUDIO '$audio' rejected" $? 1
+done
+for audio in 0 1; do
+  ( PODS_SOURCED=1 PODS_AUDIO=$audio sh -c '. ./op-client.sh' ) >/dev/null 2>&1
+  ok "PODS_AUDIO $audio accepted" $? 0
+done
+
 # A rejected saved login falls back to an anonymous pull, other errors do not.
 pull_log=$tmp/pull.log
 pod() {

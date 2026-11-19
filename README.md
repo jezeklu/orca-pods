@@ -106,8 +106,9 @@ This is the whole interface between the host and each container. Nothing else fr
 | `/state` | `$PODS_VAULT_BASE/vault-open/state`: Tailscale state in the vault | Read-write |
 | `/opt/orca` | The current Orca release in `~/.local/share/orca-pods/client/orca`, which only a short update container writes | Read-only |
 | `/wayland/wayland-0` | The Wayland socket of your session, with an ACL for the container user only | Read-write, a deliberate hole: the clipboard is shared |
+| `/pulse/native` | Only with `PODS_AUDIO=1`: the pipewire-pulse socket of your session, with an ACL for the container user only | Read-write, a deliberate hole: microphone and speakers |
 | `/dev/net/tun` | The TUN device, for Tailscale | Device |
-| Environment | Only `XDG_RUNTIME_DIR=/tmp` and `WAYLAND_DISPLAY` | |
+| Environment | Only `XDG_RUNTIME_DIR=/tmp` and `WAYLAND_DISPLAY`, with `PODS_AUDIO=1` also `PULSE_SERVER` | |
 
 **Both**
 
@@ -116,13 +117,15 @@ This is the whole interface between the host and each container. Nothing else fr
 - User IDs are mapped into your subordinate range, so `dev` in the container is not your host user.
 - The firewall in the rootless network namespace allows only outbound TCP 443 and UDP, never the LAN, the VPN or the host. Neither container starts without it.
 
-From your own home directory only three things reach a container: `~/.gitconfig` and the secrets folder on the server, the Wayland socket on the client. Everything else in the tables is data that belongs to the container.
+From your own home directory only three things reach a container: `~/.gitconfig` and the secrets folder on the server, the Wayland socket and, with `PODS_AUDIO=1`, the audio socket on the client. Everything else in the tables is data that belongs to the container.
 
 ## Client
 
 ### First run
 
 Download `op-client` from the [latest release](https://github.com/jezeklu/orca-pods/releases/latest) into `~/.local/bin`, or build it from a checkout: `./build.sh` writes the standalone files `dist/op-client` and `dist/op-server`. Client settings live in `~/.config/orca-pods/client.env`, see `client.env.example`.
+
+Audio is off by default, so Orca reports no microphone (`NotFoundError`). To use the microphone and speakers, set `PODS_AUDIO=1` in `client.env` and restart the client. It needs pipewire-pulse, which Fedora, Debian and Ubuntu desktops run by default, on Arch install `pipewire-pulse`. See [Client security boundary](#client-security-boundary) for what it exposes.
 
 `op-client install` checks the requirements and creates `~/.config/orca-pods/client.env` with `PODS_VAULT_BASE="~/.local/share/orca-pods/client-vault"` unless the file exists. A missing vault is created in `$PODS_VAULT_BASE/vault`, with `vault-open` next to it as the mount point. It asks for the new password twice, once to create the vault and once to set it up. Store the password and the master key it prints safely, without them the data is lost. An existing vault is kept. Last, it installs the latest Orca.
 
@@ -166,7 +169,7 @@ Restore with `podman unshare tar -C "$PODS_VAULT_BASE" -xzpf /path/to/backup.tgz
 Protected:
 
 - LAN, VPN and host services from anything in the container. The firewall lives in a network namespace the container cannot reach, and the client does not start without it.
-- Host files: the container sees only the vault, a read-only Orca and the Wayland socket. No container process runs as the host user.
+- Host files: the container sees only the vault, a read-only Orca, the Wayland socket and, with `PODS_AUDIO=1`, the audio socket. No container process runs as the host user.
 - The locked vault and its backups from reading without the password.
 - Other tailnet devices: the client reaches only port 6768 on the server and refuses incoming connections.
 
@@ -175,6 +178,7 @@ Not protected:
 - **Processes running as the host user.** While the client runs, the vault is unlocked. Its files belong to a mapped UID, so an ordinary read from your account fails, but a script that uses `podman exec` or `podman unshare` reaches the vault and the pairing token without a password. The container stops accidental reads, not a targeted attack from your own account; only a separate host account would. A closed client leaves only the encrypted vault. Revoke the token if in doubt.
 - Root on the host and kernel vulnerabilities: a container is not a VM.
 - Wayland: the clipboard is shared and the socket is a deliberate hole. `label=disable` turns SELinux off for the container.
+- Audio with `PODS_AUDIO=1`: anything in the container, agents and the built-in browser included, can record the microphone and play sound while the client runs. The PulseAudio protocol can also load modules into the sound server of your session, which runs as your host user outside the firewall. Turn it on only when you need it.
 - The Chromium sandbox is off (`--no-sandbox`), the container is the boundary for the built-in browser.
 - Credentials in the profile are stored unencrypted and protected only by the vault, which stays unlocked while the client runs.
 - Internet: TCP 443 and UDP are allowed, so data can leave. The firewall cannot tell public addresses routed through a VPN apart.
