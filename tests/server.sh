@@ -116,7 +116,7 @@ pod kill orca-pods-server >/dev/null
 sleep 1
 ./op-server.sh start
 pod exec --user dev orca-pods-server sh -c 'for i in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q "\"state\": \"ready\"" && break; sleep 2; done; orca-ide status --json | jq -r .result.runtime.appVersion; test -d "$HOME/proj"'
-test "$(pod exec orca-pods-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
+test "$(pod exec --user dev orca-pods-server cat /etc/machine-id)" = "$(cat "$STORE/machine-id")" || { echo "FAIL  machine id not fixed"; exit 1; }
 echo "OK    fixed machine id, a new image does not leave a foreign Orca lock"
 ./op-server.sh restart >/dev/null
 [ "$(./op-server.sh shell -- sh -c 'id -u; pwd' </dev/null | tr '\n' ' ')" = "30100 /home/dev " ] || { echo "FAIL  shell"; exit 1; }

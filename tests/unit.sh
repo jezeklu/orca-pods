@@ -90,6 +90,14 @@ for want in 'iifname "br-orca-pods" drop' 'tcp dport 443 accept' '192.168.0.0/16
   case "$rules" in *"$want"*) r=ok ;; *) r=bad ;; esac; ok "firewall: $want" "$r" ok
 done
 
+# The PATH of the server image starts in the home of dev, so root must not inherit it.
+bad=$(grep -n 'pod exec' op-server.sh | grep -v -e '--user dev' -e '^[0-9]*:root_exec() {' -e '^[0-9]*: *pod exec --env "PATH=\$ROOT_PATH" ')
+ok "every exec as root sets its PATH" "$bad" ""
+ok "server tests exec only as dev" "$(grep -n 'pod exec' tests/server.sh | grep -v -e '--user dev')" ""
+init_path=$(sed -n 's/^PATH=\(.*\)$/\1/p' server/bin/orca-server-init)
+case ":$init_path:" in :/*:) case "$init_path" in *home*) r=bad ;; *) r=ok ;; esac ;; *) r=bad ;; esac
+ok "orca-server-init sets a PATH without the home" "$r" ok
+
 ./build.sh
 for f in dist/op-*; do
   case "$f" in *.sig) continue ;; esac

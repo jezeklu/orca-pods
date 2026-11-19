@@ -23,6 +23,12 @@ HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
 UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-pods-$INSTANCE.service"
 
+# The image PATH starts in the home of dev, which dev controls. Root gets a fixed one.
+ROOT_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+root_exec() { # command...
+  pod exec --env "PATH=$ROOT_PATH" orca-pods-server "$@"
+}
+
 running() {
   [ "$(pod container inspect --format '{{.State.Running}}' orca-pods-server 2>/dev/null)" = true ]
 }
@@ -144,7 +150,7 @@ start_server() {
 }
 
 tailscale_state() {
-  pod exec orca-pods-server tailscale status --json 2>/dev/null \
+  root_exec tailscale status --json 2>/dev/null \
     | sed -n 's/.*"BackendState": *"\([A-Za-z]*\)".*/\1/p'
 }
 
@@ -223,13 +229,13 @@ restart_server() {
 
 tailscale_login() {
   require_running
-  pod exec orca-pods-server tailscale up "--hostname=orca-pods-$INSTANCE" \
+  root_exec tailscale up "--hostname=orca-pods-$INSTANCE" \
     --advertise-tags=tag:orca-server --accept-dns=false
 }
 
 pairing() {
   require_running
-  ip=$(pod exec orca-pods-server tailscale ip -4 2>/dev/null || true)
+  ip=$(root_exec tailscale ip -4 2>/dev/null || true)
   mobile=""
   [ "${1:-}" != --mobile ] || mobile=--mobile
   set -- "ws://127.0.0.1:$PORT"
@@ -352,7 +358,7 @@ report() { # ok? name
 
 check() { # name expected(pass|block) curl-args...
   name=$1; want=$2; shift 2
-  if pod exec orca-pods-server curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
+  if root_exec curl -ksS -o /dev/null -m 6 "$@" 2>/dev/null; then got=pass; else got=block; fi
   [ "$got" = "$want" ]; report $? "$name ($got)"
 }
 
@@ -384,6 +390,16 @@ run_tests() {
   SECRETS=$work/secrets
   grant_secrets
   prepare_dirs "$work/home" "$work/state"
+  # Programs of dev under the names root runs. Each leaves a file named after the UID that ran it.
+  pod unshare sh -ec '
+    mkdir -p "$1/.local/bin"
+    for name in tailscaled tailscale curl sh ip awk; do
+      printf "%s\n" "#!/bin/sh" "PATH=\${PATH#/home/dev/.local/bin:}" "n=\${0##*/}" \
+        "echo \"\$n\" >>\"/tmp/planted-\$(id -u)\"" "exec \"\$n\" \"\$@\"" >"$1/.local/bin/$name"
+      chmod 755 "$1/.local/bin/$name"
+    done
+    chown -R '"$DEV_IN_NS:$DEV_IN_NS"' "$1/.local/bin"
+  ' sh "$work/home"
   srv=$(mktemp -d); python3 -m http.server --directory "$srv" 18767 >/dev/null 2>&1 & srvpid=$!
   trap 'set +e; kill "$srvpid" 2>/dev/null; rm -rf "$srv"; teardown; pod unshare rm -rf "$work"' EXIT
   sleep 1
@@ -398,7 +414,7 @@ run_tests() {
   pod exec -d --user dev orca-pods-server python3 -m http.server 6768 --directory /tmp >/dev/null
   sleep 3
 
-  brgw=$(pod exec orca-pods-server sh -c "ip route | awk '/default/{print \$3}'")
+  brgw=$(root_exec sh -c "ip route | awk '/default/{print \$3}'")
   [ -n "$brgw" ] || { echo "FAIL  cannot find the container gateway"; exit 1; }
   check "LAN gateway" block "http://$gw"
   check "host" block "http://$hostip:18767"
@@ -427,6 +443,10 @@ run_tests() {
   inside "host home not visible" "test ! -e '$HOME' || test '$HOME' = /home/dev"
   inside "no other host data mounted" '! grep -E " /(mnt|media|host)" /proc/mounts'
   inside "orca-pods files in the image" 'command -v orca-update orca-restart orca-pair git-credential-pods gh'
+  tailscale_state >/dev/null || true
+  inside "programs in ~/.local/bin run for dev" 'test -s /tmp/planted-30100'
+  ran=$(pod exec --user dev orca-pods-server /bin/cat /tmp/planted-0 2>/dev/null | sort -u | tr '\n' ' ')
+  if [ -z "$ran" ]; then report 0 "root runs no program from ~/.local/bin"; else report 1 "root ran from ~/.local/bin: $ran"; fi
 
   if curl -sS -m 6 -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then report 0 "127.0.0.1:$PORT from the host"; else report 1 "127.0.0.1:$PORT from the host"; fi
   if curl -sS -m 3 -o /dev/null "http://$hostip:$PORT/" 2>/dev/null; then report 1 "LAN IP port $PORT open"; else report 0 "LAN IP port $PORT closed"; fi

@@ -1,5 +1,8 @@
 #!/bin/sh
 # PID 1. A shell, because it also has to reap what the terminal daemon leaves behind.
+# Fixed, the image PATH starts in the home of dev. tailscaled and what it runs inherit it.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 tailscaled --statedir=/state &
 pid=$!
 trap 'kill "$pid"' TERM INT
