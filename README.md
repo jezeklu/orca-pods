@@ -416,6 +416,8 @@ Downloaded images stay for the next run. The server role needs about 11 GB, `vm-
 
 `./test.sh vm` needs only QEMU from the distribution packages and `/dev/kvm`, for example `sudo pacman -S qemu-base` on Arch.
 
+The VM has 2 CPUs, 4 GB of memory and a 20 GB disk. `PODS_VM_CPUS`, `PODS_VM_MEMORY` and `PODS_VM_DISK` change that, for example `PODS_VM_MEMORY=8G PODS_VM_DISK=40G ./test.sh vm-server`. The disk is sparse and only grows with use. `PODS_VM_DIR` puts the VMs and their images in another absolute path. With `PODS_VM_KEEP=1` the VM keeps running after the test and the script prints the `ssh` command to log in. The VM is deleted when it shuts down or on Ctrl-C.
+
 ## CI/CD
 
 `.github/workflows/image.yml` builds both images, smoke-tests them and publishes them to Docker Hub with the tags `latest`, `server` and a date. Set these repository secrets:

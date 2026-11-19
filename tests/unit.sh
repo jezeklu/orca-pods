@@ -147,6 +147,33 @@ ok "prepare_dirs: link target not chowned" "$(grep -c projects "$tmp/chown.log")
 dirs_case 'touch .claude'
 ok "prepare_dirs: file instead of a directory refused" $? 1
 
+# tests/vm.sh with fake QEMU and ssh: the settings reach QEMU, a bad value stops before anything runs.
+if [ -w /dev/kvm ]; then
+  mkdir -p "$tmp/vmbin" "$tmp/vm/images"
+  : >"$tmp/vm/images/debian.qcow2"
+  for tool in qemu-system-x86_64 qemu-img; do
+    printf '#!/bin/sh\necho "%s $*" >>"%s"\n' "$tool" "$tmp/qemu.log" >"$tmp/vmbin/$tool"
+  done
+  printf '#!/bin/sh\ncat >/dev/null\n' >"$tmp/vmbin/ssh"
+  chmod +x "$tmp/vmbin/"*
+  vm_run() { : >"$tmp/qemu.log"; env PATH="$tmp/vmbin:$PATH" PODS_VM_DIR="$tmp/vm" "$@" tests/vm.sh debian </dev/null 2>&1; }
+  for setting in PODS_VM_DISK=20 PODS_VM_MEMORY=lots PODS_VM_CPUS=0 PODS_VM_DIR=relative PODS_VM_KEEP=yes; do
+    vm_run "$setting" >/dev/null; ok "vm: $setting rejected" $? 1
+    ok "vm: $setting starts nothing" "$(cat "$tmp/qemu.log")" ""
+  done
+  out=$(vm_run PODS_VM_DISK=30G PODS_VM_MEMORY=6G PODS_VM_CPUS=4); ok "vm: run with settings" $? 0
+  ok "vm: disk size" "$(grep -c "^qemu-img create .*$tmp/vm/run-debian/disk.qcow2 30G$" "$tmp/qemu.log")" 1
+  ok "vm: memory and CPUs" "$(grep -c '^qemu-system-x86_64 .*-smp 4 -m 6G ' "$tmp/qemu.log")" 1
+  ok "vm: run directory removed" "$(ls -A "$tmp/vm" | tr '\n' ' ')" "images "
+  out=$(vm_run); ok "vm: defaults" "$(grep -c -e ' 20G$' -e '-smp 2 -m 4G ' "$tmp/qemu.log")" 2
+  out=$(vm_run PODS_VM_KEEP=1)
+  line=$(printf '%s\n' "$out" | grep '^The VM keeps running. Log in with: ssh ')
+  case "$line" in *" -i $tmp/vm/run-debian/key -p 20222 "*"UserKnownHostsFile=/dev/null"*" pods@127.0.0.1") r=ok ;; *) r=bad ;; esac
+  ok "vm: PODS_VM_KEEP=1 prints the ssh command" "$r" ok
+else
+  echo "SKIP  vm settings, no access to /dev/kvm"
+fi
+
 # The PATH of the server image starts in the home of dev, so root must not inherit it.
 bad=$(grep -n 'pod exec' op-server.sh | grep -v -e '--user dev' -e '^[0-9]*:root_exec() {' -e '^[0-9]*: *pod exec --env "PATH=\$ROOT_PATH" ')
 ok "every exec as root sets its PATH" "$bad" ""

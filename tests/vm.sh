@@ -4,10 +4,23 @@
 #   tests/vm.sh [fedora|debian|ubuntu|archlinux…]   Fedora without an argument, Ubuntu is LTS 26.04
 #   tests/vm.sh clean                               remove VMs and downloaded images
 #   PODS_VM_SERVER=1 tests/vm.sh …                  also the server role and its systemd unit
+# Settings:
+#   PODS_VM_DISK=20G, PODS_VM_MEMORY=4G, PODS_VM_CPUS=2  size of the VM
+#   PODS_VM_DIR=/path                                    VMs and images elsewhere, default .local/vm
+#   PODS_VM_KEEP=1                                       keep the VM running after the test for manual work
 # The VM is deleted after the test, the downloaded image stays for the next run.
 set -eu
 cd "$(dirname "$(readlink -f "$0")")/.."
-VM=$PWD/.local/vm
+VM=${PODS_VM_DIR:-$PWD/.local/vm}
+DISK=${PODS_VM_DISK:-20G}
+MEMORY=${PODS_VM_MEMORY:-4G}
+CPUS=${PODS_VM_CPUS:-2}
+KEEP=${PODS_VM_KEEP:-0}
+case "$DISK" in *[!0-9GM]*|[!1-9]*|*[0-9]) echo "PODS_VM_DISK is a size such as 40G." >&2; exit 1 ;; esac
+case "$MEMORY" in *[!0-9GM]*|[!1-9]*|*[0-9]) echo "PODS_VM_MEMORY is a size such as 8G." >&2; exit 1 ;; esac
+case "$CPUS" in *[!0-9]*|[!1-9]*) echo "PODS_VM_CPUS is a number such as 4." >&2; exit 1 ;; esac
+case "$VM" in /*) ;; *) echo "PODS_VM_DIR must be an absolute path." >&2; exit 1 ;; esac
+case "$KEEP" in 0|1) ;; *) echo "PODS_VM_KEEP is 0 or 1." >&2; exit 1 ;; esac
 SSH_PORT=20222
 SEED_PORT=20280
 
@@ -41,6 +54,7 @@ cd repo
 cmd=$(sh op-client.sh packages)
 . /etc/os-release
 echo "$PRETTY_NAME, SELinux: $(getenforce 2>/dev/null || echo no)"
+echo "$(nproc) CPUs, $(free -g | awk '\''/^Mem:/ { print $2 }'\'')G memory, disk: $(df -h / | awk '\''NR == 2 { print $2 }'\'')"
 case "$ID" in
   # A new kernel would drop the modules of the running one, the bridge needs them.
   arch) sudo pacman -Syu --noconfirm --ignore linux >/dev/null; eval "$cmd --noconfirm python" >/dev/null ;;
@@ -106,8 +120,8 @@ users:
 CFG
   python3 -m http.server --bind 127.0.0.1 --directory "$dir/seed" "$SEED_PORT" >/dev/null 2>&1 &
   seed=$!
-  qemu-img create -q -f qcow2 -b "$base" -F qcow2 "$dir/disk.qcow2" 20G
-  qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 4G -display none \
+  qemu-img create -q -f qcow2 -b "$base" -F qcow2 "$dir/disk.qcow2" "$DISK"
+  qemu-system-x86_64 -enable-kvm -cpu host -smp "$CPUS" -m "$MEMORY" -display none \
     -serial "file:$dir/console.log" \
     -drive "file=$dir/disk.qcow2,if=virtio" \
     -netdev "user,id=n,hostfwd=tcp:127.0.0.1:$SSH_PORT-:22" -device virtio-net-pci,netdev=n \
@@ -128,7 +142,14 @@ CFG
   git ls-files -z --cached --others --exclude-standard \
     | tar c --null -T - \
     | vm_ssh 'mkdir -p repo && tar x -C repo'
-  { [ -z "${PODS_VM_SERVER:-}" ] || echo "export PODS_VM_SERVER=1"; printf '%s' "$inner"; } | vm_ssh bash -s
+  rc=0
+  { [ -z "${PODS_VM_SERVER:-}" ] || echo "export PODS_VM_SERVER=1"; printf '%s' "$inner"; } | vm_ssh bash -s || rc=$?
+  if [ "$KEEP" = 1 ]; then
+    echo "The VM keeps running. Log in with: ssh -i $dir/key -p $SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pods@127.0.0.1"
+    echo "It is deleted when it shuts down or on Ctrl-C."
+    wait "$qemu" || true
+  fi
+  return "$rc"
 }
 
 fails=0
