@@ -124,6 +124,29 @@ ok "client: no UID, share_audio fails" $? 1
 ok "no ACL set without a UID" "$(cat "$acl_log")" ""
 ok "client: every ACL checks the UID" "$(grep -n 'setfacl.*\$(dev_host_uid)' op-client.sh op-server.sh)" ""
 
+# prepare_dirs runs as root of the user namespace in a home that dev controls, so it follows no link.
+mkdir -p "$tmp/fakebin"
+printf '#!/bin/sh\necho "$*" >>"%s"\n' "$tmp/chown.log" >"$tmp/fakebin/chown"
+chmod +x "$tmp/fakebin/chown"
+dirs_case() { # shell code run in the home first
+  rm -rf "$tmp/pd"; mkdir -p "$tmp/pd/home" "$tmp/pd/state" "$tmp/pd/victim"; : >"$tmp/chown.log"
+  (cd "$tmp/pd/home" && eval "$1")
+  PD=$tmp/pd PATH="$tmp/fakebin:$PATH" PODS_SOURCED=1 sh -c '. ./op-server.sh; set +e
+    pod() { shift; "$@"; }
+    prepare_dirs "$PD/home" "$PD/state"' >/dev/null 2>&1
+}
+dirs_case :
+ok "prepare_dirs: fresh home" $? 0
+ok "prepare_dirs: fresh home created" "$(test -d "$tmp/pd/home/.local/share/orca-server" && grep -c 'orca-server' "$tmp/chown.log")" 1
+dirs_case 'ln -s ../victim .local'
+ok "prepare_dirs: link at a parent refused" $? 1
+ok "prepare_dirs: nothing created through the link" "$(ls -A "$tmp/pd/victim")" ""
+dirs_case 'ln -s ../victim projects'
+ok "prepare_dirs: link at a last component refused" $? 1
+ok "prepare_dirs: link target not chowned" "$(grep -c projects "$tmp/chown.log")" 0
+dirs_case 'touch .claude'
+ok "prepare_dirs: file instead of a directory refused" $? 1
+
 # The PATH of the server image starts in the home of dev, so root must not inherit it.
 bad=$(grep -n 'pod exec' op-server.sh | grep -v -e '--user dev' -e '^[0-9]*:root_exec() {' -e '^[0-9]*: *pod exec --env "PATH=\$ROOT_PATH" ')
 ok "every exec as root sets its PATH" "$bad" ""

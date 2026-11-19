@@ -66,13 +66,21 @@ grant_secrets() {
     || { echo "Cannot set ACLs on $SECRETS, it must be on a local file system." >&2; return 1; }
 }
 
+# Runs as root of the user namespace in a home that dev controls. Parents come first and no link is
+# followed, so a link such as .local -> a folder of the host user can neither receive nor chown anything.
+# The container is stopped meanwhile.
 prepare_dirs() { # home state
   mkdir -p "$1" "$2"
   pod unshare sh -c '
-    cd "$1" && mkdir -p .agents/skills .claude/skills .local/share/orca-server projects
-    chown '"$DEV_IN_NS:$DEV_IN_NS"' . .agents .agents/skills .claude .claude/skills .local .local/share \
-      .local/share/orca-server projects
-    chown 1:1 "$2"
+    cd "$1" || exit 1
+    for d in .agents .agents/skills .claude .claude/skills .local .local/share .local/share/orca-server projects; do
+      if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then
+        echo "$1/$d is not a plain directory, the server will not start." >&2; exit 1
+      fi
+      [ -d "$d" ] || mkdir "$d" || exit 1
+    done
+    chown -h '"$DEV_IN_NS:$DEV_IN_NS"' . .agents .agents/skills .claude .claude/skills .local .local/share \
+      .local/share/orca-server projects && chown -h 1:1 "$2"
   ' sh "$1" "$2"
 }
 
