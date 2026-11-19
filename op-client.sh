@@ -14,6 +14,10 @@ OPEN="$VAULT_BASE/vault-open"
 # Orca versions, written only by dev in a short container, mounted read-only into the client.
 ORCA_DIR="$STORE/orca"
 SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/${WAYLAND_DISPLAY:-wayland-0}"
+# Opt-in, a second deliberate hole: the container can record the microphone while Orca runs.
+AUDIO="${PODS_AUDIO:-0}"
+case "$AUDIO" in 0|1) ;; *) echo "PODS_AUDIO must be 0 or 1." >&2; exit 1 ;; esac
+PULSE_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
 
 require_free() {
   [ ! -e "$RUNROOT" ] || { echo "The client is running or left state behind. Check, then run: $0 cleanup" >&2; exit 1; }
@@ -31,6 +35,9 @@ teardown() {
   fi
   if [ -f "$RUNROOT/wayland.acl" ] && [ -S "$SOCK" ]; then
     setfacl --set-file="$RUNROOT/wayland.acl" "$SOCK" || { echo "WARNING: could not restore the Wayland socket ACL" >&2; bad=1; }
+  fi
+  if [ -f "$RUNROOT/pulse.acl" ] && [ -S "$PULSE_SOCK" ]; then
+    setfacl --set-file="$RUNROOT/pulse.acl" "$PULSE_SOCK" || { echo "WARNING: could not restore the audio socket ACL" >&2; bad=1; }
   fi
   if [ -d "$OPEN" ] && pod unshare mountpoint -q "$OPEN"; then
     pod unshare umount "$OPEN" || { echo "WARNING: could not unmount the vault" >&2; bad=1; }
@@ -57,6 +64,14 @@ check_requirements() {
   [ -f "$VAULT/gocryptfs.conf" ] || { echo "Vault $VAULT does not exist, see README." >&2; exit 1; }
   [ -d "$OPEN" ] || { echo "Directory $OPEN is missing, see README." >&2; exit 1; }
   [ -S "$SOCK" ] || { echo "Wayland socket $SOCK is missing." >&2; exit 1; }
+  [ "$AUDIO" = 0 ] || [ -S "$PULSE_SOCK" ] || { echo "Audio socket $PULSE_SOCK is missing, PODS_AUDIO=1 needs pipewire-pulse." >&2; exit 1; }
+}
+
+# Does nothing without PODS_AUDIO=1. Needs the runroot for the saved ACL.
+share_audio() {
+  [ "$AUDIO" = 1 ] || return 0
+  getfacl -cp "$PULSE_SOCK" >"$RUNROOT/pulse.acl"
+  setfacl -m "u:$(dev_host_uid):rwx" "$PULSE_SOCK"
 }
 
 # Downloads and extracts in the container behind the firewall, the host never runs the AppImage.
@@ -234,8 +249,11 @@ run_client() {
   mkdir -p "$RUNROOT"
   getfacl -cp "$SOCK" >"$RUNROOT/wayland.acl"
   setfacl -m "u:$(dev_host_uid):rwx" "$SOCK"
+  share_audio
+  set --
+  [ "$AUDIO" = 0 ] || set -- -e PULSE_SERVER=unix:/pulse/native --mount "type=bind,src=$PULSE_SOCK,dst=/pulse/native"
 
-  start_client -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=/wayland/wayland-0 \
+  start_client -e XDG_RUNTIME_DIR=/tmp -e WAYLAND_DISPLAY=/wayland/wayland-0 "$@" \
     --mount "type=bind,src=$OPEN/home,dst=/home/dev" \
     --mount "type=bind,src=$OPEN/state,dst=/state" \
     --mount "type=bind,src=$(readlink -f "$ORCA_DIR/current"),dst=/opt/orca,readonly" \
@@ -289,6 +307,7 @@ Maintenance
 
 Settings  $CONFIG
           PODS_VAULT_BASE: the folder with the vault
+          PODS_AUDIO=1: share the microphone and speakers, see README
 Data      $STORE (image, Orca), the vault in PODS_VAULT_BASE
 More      https://github.com/jezeklu/orca-pods#readme
 USAGE

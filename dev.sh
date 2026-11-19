@@ -60,6 +60,23 @@ vault_tests() {
   rm -f "$CONFIG"
 }
 
+# A throwaway socket instead of the real one, the ACL must come back after teardown.
+audio_tests() {
+  echo "--- audio"
+  dir=$(mktemp -d)
+  python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$dir/native"
+  before=$(getfacl -cp "$dir/native")
+  if (AUDIO=1 PULSE_SOCK=$dir/native; mkdir -p "$RUNROOT"; share_audio \
+      && getfacl -cp "$PULSE_SOCK" | grep -q "^user:$(dev_host_uid):rwx" && teardown >/dev/null); then
+    echo "OK    PODS_AUDIO=1 grants the socket to dev only while the client runs"
+  else fail "audio socket ACL"; fi
+  [ "$(getfacl -cp "$dir/native")" = "$before" ] && [ ! -e "$RUNROOT" ] \
+    && echo "OK    teardown restores the audio socket ACL" || fail "audio socket ACL after teardown"
+  (AUDIO=0 PULSE_SOCK=$dir/native; mkdir -p "$RUNROOT"; share_audio; teardown >/dev/null)
+  [ "$(getfacl -cp "$dir/native")" = "$before" ] && echo "OK    PODS_AUDIO=0 leaves the audio socket alone" || fail "audio socket with PODS_AUDIO=0"
+  rm -rf "$dir"
+}
+
 run_tests() {
   url=${1:-}; ctl=""
   if [ -n "$url" ]; then
@@ -90,6 +107,8 @@ run_tests() {
   check "http example.com" block http://example.com
   check "https tailscale.com" pass https://tailscale.com
   if pod exec orca-pods-client sh -c 'ip -br link | grep -q tailscale0'; then echo "OK    tailscale0 exists"; else echo "FAIL  tailscale0 missing"; FAILS=$((FAILS + 1)); fi
+  if pod exec orca-pods-client test -e /pulse; then echo "FAIL  audio socket without PODS_AUDIO"; FAILS=$((FAILS + 1)); else echo "OK    no audio socket without PODS_AUDIO"; fi
+  if pod exec orca-pods-client sh -c 'ldconfig -p | grep -q libpulse.so.0'; then echo "OK    libpulse in the image"; else echo "FAIL  libpulse missing"; FAILS=$((FAILS + 1)); fi
   [ "$(pod exec orca-pods-client id -u dev)" = 30100 ] && echo "OK    dev has UID 30100" || { echo "FAIL  dev UID"; FAILS=$((FAILS + 1)); }
 
   echo "--- Orca releases, kept in .local for the next run"
@@ -135,6 +154,7 @@ run_tests() {
   if (orca_update 1.4.241) >/dev/null 2>&1 && [ ! -e "$RUNROOT" ]; then echo "OK    orca-update of a closed client"
   else echo "FAIL  orca-update of a closed client"; FAILS=$((FAILS + 1)); fi
   vault_tests
+  audio_tests
   echo "--- host"
   echo "ip_forward=$(cat /proc/sys/net/ipv4/ip_forward) br-orca-pods=$(ip -br link | grep -c br-orca-pods || true) pasta=$(pgrep -c pasta || true)"
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }

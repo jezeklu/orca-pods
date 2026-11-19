@@ -54,4 +54,7 @@ CMD ["/usr/local/bin/orca-server-init"]
 
 # Last, so a plain build keeps producing the client.
 FROM base AS client
+# PulseAudio client library, Chromium needs it for the opt-in audio socket (PODS_AUDIO).
+RUN apt-get update && apt-get install -y --no-install-recommends libpulse0 \
+    && rm -rf /var/lib/apt/lists/*
 CMD ["tailscaled", "--statedir=/state"]
