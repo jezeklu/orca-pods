@@ -19,6 +19,11 @@ case "$TOOLS" in
   *[!a-z0-9\ -]*) echo "PODS_TOOLS is a space-separated list of tool names." >&2; exit 1 ;;
 esac
 MEMORY="${PODS_MEMORY:-10g}"
+CONTAINERS="${PODS_CONTAINERS:-}"
+case "$CONTAINERS" in
+  ""|0|1) ;;
+  *) echo "PODS_CONTAINERS is 0 or 1." >&2; exit 1 ;;
+esac
 HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
 UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-pods-$INSTANCE.service"
@@ -55,6 +60,116 @@ check_secrets() {
     "$real"/*) echo "PODS_SECRETS_DIR must not be the home directory or above it." >&2; return 1 ;;
   esac
   [ -d "$SECRETS" ] || { echo "Directory $SECRETS is missing." >&2; return 1; }
+}
+
+# Nested containers: the server maps 0:1:165536, so the user needs that many subordinate UIDs and GIDs,
+# and the user namespace that is running must already have them. Nothing here changes the host.
+NESTED_IDS=165536
+SUBGID_FILE=/etc/subgid
+LOGIN_DEFS=/etc/login.defs
+NSSWITCH=/etc/nsswitch.conf
+
+subid_count() { # file
+  awk -F: -v u="$(id -un)" -v n="$(id -u)" '$1 == u || $1 == n { s += $3 } END { print s + 0 }' "$1" 2>/dev/null || echo 0
+}
+
+# Sources of an nsswitch database, without the [action] items.
+nss_sources() { # database
+  sed -n "s/^$1:[[:space:]]*//p" "$NSSWITCH" 2>/dev/null | sed 's/\[[^]]*\]//g' | tr -s ' \t' '\n' | grep -v '^$'
+}
+
+login_def() { # name default
+  v=$(awk -v k="$1" '$1 == k { print $2 }' "$LOGIN_DEFS" 2>/dev/null | tail -n 1)
+  echo "${v:-$2}"
+}
+
+# File part, needs no store: counts the IDs, or prints the one command that adds a free range.
+nested_ids_files() {
+  me=$(id -un)
+  uids=$(subid_count "$SUBUID_FILE"); gids=$(subid_count "$SUBGID_FILE")
+  if [ "$uids" -ge "$NESTED_IDS" ] && [ "$gids" -ge "$NESTED_IDS" ]; then
+    echo "OK    $uids subordinate UIDs and $gids GIDs for nested containers"
+    return 0
+  fi
+  echo "FAIL  nested containers need $NESTED_IDS subordinate UIDs and GIDs, $me has $uids and $gids"
+  other=$(nss_sources subid | grep -vx files | head -n 1)
+  if [ -n "$other" ]; then
+    echo "      $NSSWITCH takes subordinate IDs from $other, not from $SUBUID_FILE. Add them there."
+    return 1
+  fi
+  # A range over an account this check cannot see would give a nested process the UID of that account.
+  other=$({ nss_sources passwd; nss_sources group; } | grep -vx -e files -e systemd | head -n 1)
+  if [ -n "$other" ]; then
+    echo "      $NSSWITCH lists accounts from $other, which this check cannot see. Pick a free range by hand, see README."
+    return 1
+  fi
+  short=$((NESTED_IDS - uids))
+  [ $((NESTED_IDS - gids)) -le "$short" ] || short=$((NESTED_IDS - gids))
+  size=$(( (short + 65535) / 65536 * 65536 ))
+  min=$(login_def SUB_UID_MIN 100000); gmin=$(login_def SUB_GID_MIN 100000)
+  [ "$gmin" -le "$min" ] || min=$gmin
+  max=$(login_def SUB_UID_MAX 600100000); gmax=$(login_def SUB_GID_MAX 600100000)
+  [ "$gmax" -ge "$max" ] || max=$gmax
+  # systemd-nspawn allocates from 524288 upward, unless the distribution starts there itself (Fedora).
+  cap=0; below=""
+  [ "$min" -ge 524288 ] || { cap=524288; below=" that ends below 524288"; }
+  range=$({
+    awk -F: 'NF >= 3 { print $2, $2 + $3 - 1 }' "$SUBUID_FILE" "$SUBGID_FILE" 2>/dev/null
+    getent passwd | awk -F: '{ print $3, $3 }'
+    getent group | awk -F: '{ print $3, $3 }'
+  } | sort -n | awk -v at="$min" -v size="$size" -v max="$max" -v cap="$cap" '
+    $2 < at { next }
+    $1 > at + size - 1 { exit }
+    { at = $2 + 1 }
+    END {
+      end = at + size - 1
+      if (end > max || (cap && end >= cap)) exit 1
+      print at "-" end
+    }')
+  if [ -z "$range" ]; then
+    echo "      No free range of $size IDs between $min and $max$below. Pick one by hand, see README."
+    return 1
+  fi
+  flags=""
+  [ "$uids" -ge "$NESTED_IDS" ] || flags="--add-subuids $range"
+  [ "$gids" -ge "$NESTED_IDS" ] || flags="${flags:+$flags }--add-subgids $range"
+  echo "      Add a free range, then stop every rootless container of $me and run: podman system migrate"
+  echo "        sudo usermod $flags $me"
+  return 1
+}
+
+# Live part: the pause process keeps the old map until every rootless container of the user is gone.
+# Prints the steps, never migrates: that would cut off containers of other stores.
+nested_live_map() {
+  if ! command -v podman >/dev/null || ! version_ok "$(podman --version | awk '{ print $NF }')"; then
+    echo "SKIP  running user namespace, Podman is missing or too old"
+    return 0
+  fi
+  need=$((NESTED_IDS + 1))
+  uids=$(pod unshare cat /proc/self/uid_map | awk '{ s += $3 } END { print s + 0 }')
+  gids=$(pod unshare cat /proc/self/gid_map | awk '{ s += $3 } END { print s + 0 }')
+  if [ "$uids" -ge "$need" ] && [ "$gids" -ge "$need" ]; then
+    echo "OK    running user namespace has $uids UIDs and $gids GIDs"
+    return 0
+  fi
+  echo "FAIL  the running user namespace has $uids UIDs and $gids GIDs, nested containers need $need"
+  echo "      Stop every rootless container of $(id -un): all servers, the client and any other. Then run: podman system migrate"
+  return 1
+}
+
+# The shared doctor stays as it is, the client and other roles call it too.
+server_doctor() {
+  bad=0
+  doctor || bad=1
+  [ "$CONTAINERS" = 1 ] || return "$bad"
+  if nested_ids_files; then
+    require_user
+    prepare_store
+    nested_live_map || bad=1
+  else
+    bad=1
+  fi
+  return "$bad"
 }
 
 # Read access for dev only, the default ACL covers files added later.
@@ -121,6 +236,11 @@ start_network() {
 start_server() {
   if running; then echo "The server is already running."; return 0; fi
   check_secrets
+  if [ "$CONTAINERS" = 1 ] && ! out=$(nested_ids_files && nested_live_map); then
+    printf '%s\n' "$out" >&2
+    echo "PODS_CONTAINERS=1 needs the steps above, the server will not start." >&2
+    exit 1
+  fi
   # After a power cut the store still lists containers that no longer exist.
   teardown >/dev/null 2>&1
   set -e
@@ -331,7 +451,7 @@ UNITFILE
 }
 
 install_server() {
-  doctor
+  server_doctor || exit 1
   if [ ! -f "$CONFIG" ]; then
     mkdir -p "$(dirname "$CONFIG")"
     printf 'PODS_SECRETS_DIR="%s"\n' "$DEFAULT_SECRETS" >"$CONFIG"
@@ -522,7 +642,7 @@ USAGE
 main() {
   case "${1:-}" in
     ""|help|-h|--help) usage; return ;;
-    doctor) doctor; return ;;
+    doctor) server_doctor; return ;;
     packages) packages_cmd; return ;;
   esac
   require_user

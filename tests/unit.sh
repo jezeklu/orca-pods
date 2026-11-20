@@ -108,6 +108,102 @@ ok "subuid: live map without dev falls back" "$(host_uid "$me:100000:65536" "0 $
 ok "subuid: too few IDs" "$(host_uid "$me:100000:30000" ''; echo " $?")" " 1"
 ok "subuid: no line" "$(host_uid "other:100000:65536" ''; echo " $?")" " 1"
 
+# Subordinate IDs for nested containers: the range doctor proposes, from fixture files and a getent stub.
+nested_files() { # subuid subgid [login.defs] [nsswitch] [passwd] [group]
+  printf '%b\n' "$1" >"$tmp/n-subuid"; printf '%b\n' "$2" >"$tmp/n-subgid"
+  printf '%b\n' "${3:-SUB_UID_MIN 100000\nSUB_UID_MAX 600100000\nSUB_GID_MIN 100000\nSUB_GID_MAX 600100000}" >"$tmp/n-defs"
+  printf '%b\n' "${4:-passwd: files systemd\ngroup: files [SUCCESS=merge] systemd\nsubid: files}" >"$tmp/n-nss"
+  printf '%b\n' "${5:-root:x:0:0::/root:/bin/sh\nnobody:x:65534:65534::/:/bin/false}" >"$tmp/n-passwd"
+  printf '%b\n' "${6:-root:x:0:\nnobody:x:65534:}" >"$tmp/n-group"
+  N=$tmp PODS_SOURCED=1 sh -c '. ./op-server.sh; set +e
+    SUBUID_FILE=$N/n-subuid SUBGID_FILE=$N/n-subgid LOGIN_DEFS=$N/n-defs NSSWITCH=$N/n-nss
+    getent() { cat "$N/n-$1"; }
+    nested_ids_files' 2>&1
+}
+cmd_of() { printf '%s\n' "$1" | sed -n 's/^ *\(sudo usermod .*\)$/\1/p'; }
+out=$(nested_files "$me:100000:65536" "$me:100000:65536"); rc=$?
+ok "nested ids: single user fails" $rc 1
+ok "nested ids: single user command" "$(cmd_of "$out")" "sudo usermod --add-subuids 165536-296607 --add-subgids 165536-296607 $me"
+out=$(nested_files "other:100000:65536\n$me:165536:65536\nthird:231072:65536" "other:100000:65536\n$me:165536:65536\nthird:231072:65536")
+ok "nested ids: several users" "$(cmd_of "$out")" "sudo usermod --add-subuids 296608-427679 --add-subgids 296608-427679 $me"
+out=$(nested_files "other:100000:65536\n$me:200000:65536" "other:100000:65536\n$me:200000:65536")
+ok "nested ids: a gap too small is skipped" "$(cmd_of "$out")" "sudo usermod --add-subuids 265536-396607 --add-subgids 265536-396607 $me"
+out=$(nested_files "other:100000:65536\n$me:400000:65536" "other:100000:65536\n$me:400000:65536")
+ok "nested ids: a large enough gap is used" "$(cmd_of "$out")" "sudo usermod --add-subuids 165536-296607 --add-subgids 165536-296607 $me"
+out=$(nested_files "$me:524288:65536" "$me:524288:65536" "SUB_UID_MIN 524288\nSUB_UID_MAX 600100000\nSUB_GID_MIN 524288\nSUB_GID_MAX 600100000")
+ok "nested ids: Fedora SUB_UID_MIN 524288" "$(cmd_of "$out")" "sudo usermod --add-subuids 589824-720895 --add-subgids 589824-720895 $me"
+out=$(nested_files "other:100000:400000\n$me:500000:65536" "other:100000:400000\n$me:500000:65536"); rc=$?
+ok "nested ids: no block below 524288 fails" $rc 1
+ok "nested ids: no block below 524288, no command" "$(cmd_of "$out")" ""
+out=$(nested_files "$me:100000:65536" "$me:100000:65536" "" "" "root:x:0:0::/root:/bin/sh\nremote:x:200000:200000::/home/remote:/bin/sh")
+ok "nested ids: an account UID inside the candidate is skipped" "$(cmd_of "$out")" "sudo usermod --add-subuids 200001-331072 --add-subgids 200001-331072 $me"
+out=$(nested_files "$me:100000:65536" "$me:100000:65536" "SUB_UID_MIN 100000\nSUB_UID_MAX 200000\nSUB_GID_MIN 100000\nSUB_GID_MAX 200000"); rc=$?
+ok "nested ids: no free block fails" $rc 1
+ok "nested ids: no free block, no command" "$(cmd_of "$out")" ""
+out=$(nested_files "$me:100000:65536\n$me:165536:131072" "$me:100000:65536\n$me:165536:131072"); rc=$?
+ok "nested ids: enough already" $rc 0
+ok "nested ids: enough already, no command" "$(cmd_of "$out")" ""
+out=$(nested_files "$me:100000:30000\n$me:300000:35536\n$me:400000:100000" "$me:100000:30000\n$me:300000:35536\n$me:400000:100000"); rc=$?
+ok "nested ids: ranges split over several lines" $rc 0
+out=$(nested_files "$me:100000:65536\n$me:165536:131072" "$me:100000:65536")
+ok "nested ids: only GIDs missing" "$(cmd_of "$out")" "sudo usermod --add-subgids 296608-427679 $me"
+out=$(nested_files "$me:100000:65536" "$me:100000:65536" "" "passwd: files systemd\ngroup: files systemd\nsubid: sss"); rc=$?
+ok "nested ids: subid from sss fails" $rc 1
+ok "nested ids: subid from sss, no command" "$(cmd_of "$out")" ""
+out=$(nested_files "$me:100000:65536" "$me:100000:65536" "" "passwd: files sss\ngroup: files sss"); rc=$?
+ok "nested ids: accounts from sss fail" $rc 1
+ok "nested ids: accounts from sss, no command" "$(cmd_of "$out")" ""
+out=$(nested_files "$me:100000:65536\n$me:165536:131072" "$me:100000:65536\n$me:165536:131072" "" "passwd: files sss\ngroup: files"); rc=$?
+ok "nested ids: accounts from sss, enough already" $rc 0
+
+# The running user namespace: too small prints the migration steps and runs nothing.
+live_map() { # uid_map gid_map [podman version]
+  : >"$tmp/live.log"
+  L=$tmp/live.log UMAP=$1 GMAP=$2 PV=${3:-5.4.2} PODS_SOURCED=1 sh -c '. ./op-server.sh; set +e
+    podman() { echo "podman version $PV"; }
+    pod() { echo "$*" >>"$L"
+      case "$*" in "unshare cat /proc/self/uid_map") printf "%b\n" "$UMAP" ;; "unshare cat /proc/self/gid_map") printf "%b\n" "$GMAP" ;; *) return 1 ;; esac; }
+    nested_live_map' 2>&1
+}
+small="0 1000 1\n1 100000 65536"
+big="0 1000 1\n1 100000 65536\n65537 165536 131072"
+out=$(live_map "$small" "$big"); rc=$?
+ok "live map: too small fails" $rc 1
+case "$out" in *"podman system migrate"*) r=ok ;; *) r=bad ;; esac; ok "live map: prints the migration" "$r" ok
+ok "live map: runs nothing but reading the maps" "$(sort -u "$tmp/live.log" | tr '\n' ';')" "unshare cat /proc/self/gid_map;unshare cat /proc/self/uid_map;"
+out=$(live_map "$big" "$small"); ok "live map: GIDs too small fail" $? 1
+out=$(live_map "$big" "$big"); ok "live map: large enough" $? 0
+out=$(live_map "$small" "$small" 4.9.3); rc=$?
+ok "live map: old Podman skips" $rc 0
+case "$out" in "SKIP  "*) r=ok ;; *) r=bad ;; esac; ok "live map: old Podman prints SKIP" "$r" ok
+ok "live map: old Podman reads no map" "$(cat "$tmp/live.log")" ""
+
+# PODS_CONTAINERS: only empty, 0 and 1. Without 1, doctor, install and start run no nested check.
+for v in yes 2 ' '; do
+  ( PODS_SOURCED=1 PODS_CONTAINERS=$v sh -c '. ./op-server.sh' ) >/dev/null 2>&1
+  ok "PODS_CONTAINERS '$v' rejected" $? 1
+done
+for v in 0 1; do
+  ( PODS_SOURCED=1 PODS_CONTAINERS=$v sh -c '. ./op-server.sh' ) >/dev/null 2>&1
+  ok "PODS_CONTAINERS $v accepted" $? 0
+done
+flow() { # PODS_CONTAINERS command
+  : >"$tmp/flow.log"
+  L=$tmp/flow.log PODS_SOURCED=1 PODS_CONTAINERS=$1 sh -c '. ./op-server.sh; set +e
+    log() { echo "$1" >>"$L"; }
+    doctor() { log doctor; }; require_user() { log require_user; }; prepare_store() { log prepare_store; }
+    nested_ids_files() { log nested_files; echo "FAIL  nested"; return 1; }; nested_live_map() { log nested_live; }
+    check_secrets() { :; }; running() { return 1; }; teardown() { log teardown; }; update_image() { log update_image; }
+    write_unit() { log write_unit; }; systemctl() { log systemctl; }
+    '"$2" >/dev/null 2>&1
+  echo "$?:$(tr '\n' ' ' <"$tmp/flow.log")"
+}
+ok "doctor: default mode unchanged" "$(flow '' server_doctor)" "0:doctor "
+ok "doctor: nested check with PODS_CONTAINERS=1" "$(flow 1 server_doctor)" "1:doctor nested_files "
+ok "start: default mode, no nested check" "$(flow 0 '(start_server)' | cut -d: -f2 | grep -c nested)" 0
+ok "start: refused before anything runs" "$(flow 1 '(start_server)')" "1:nested_files "
+ok "install: refused before the unit" "$(flow 1 '(install_server)')" "1:doctor nested_files "
+
 # Without a host UID for dev, nothing gets an ACL: setfacl with an empty user changes the owner entry.
 acl_log=$tmp/acl.log
 : >"$acl_log"
