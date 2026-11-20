@@ -107,8 +107,10 @@ table inet orca_pods {
     } drop
 NFT
   [ -z "$own" ] || echo "    ip daddr { $own } drop"
+  echo "    tcp dport 443 accept"
+  # Plain HTTP for apt and image builds in a server with containers inside, after every drop.
+  [ "$ROLE" != server ] || [ "${CONTAINERS:-}" != 1 ] || echo "    tcp dport 80 accept"
   cat <<'NFT'
-    tcp dport 443 accept
     meta l4proto udp accept
     drop
   }

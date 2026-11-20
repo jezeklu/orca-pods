@@ -204,6 +204,114 @@ ok "start: default mode, no nested check" "$(flow 0 '(start_server)' | cut -d: -
 ok "start: refused before anything runs" "$(flow 1 '(start_server)')" "1:nested_files "
 ok "install: refused before the unit" "$(flow 1 '(install_server)')" "1:doctor nested_files "
 
+# Nested mode: the flags of the server container in both modes, from run_container itself.
+flags() { # PODS_CONTAINERS
+  PODS_SOURCED=1 PODS_INSTANCE=t PODS_CONTAINERS=$1 sh -c '. ./op-server.sh; set +e
+    pod() { printf "%s\n" "$@" >&2; }; SERVER_IMAGE=${SERVER_IMAGE:-orca-pods}; [ "$CONTAINERS" != 1 ] || SERVER_IMAGE=sha123
+    run_container --extra; echo "STORE=$STORE"' 2>&1 | tr '\n' ' '
+}
+f0=$(flags 0); f1=$(flags 1)
+st=${f1##*STORE=}; st=${st% }
+ok "flags: default mode unchanged" "$f0" "run -d --rm --name orca-pods-server --hostname orca-pods-t --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 --uidmap 0:1:65536 --gidmap 0:1:65536 --device /dev/net/tun --cap-drop=all --cap-add=NET_ADMIN --security-opt no-new-privileges --security-opt label=disable --read-only --tmpfs /tmp:rw,exec,size=2g,mode=1777 --tmpfs /run --memory 10g --pids-limit 4096 -p 127.0.0.1:6769:6768 --extra orca-pods STORE=$st "
+ok "flags: nested mode" "$f1" "run -d --rm --name orca-pods-server --hostname orca-pods-t --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 --uidmap 0:1:165536 --gidmap 0:1:165536 --device /dev/net/tun --cap-drop=all --cap-add=NET_ADMIN,SETUID,SETGID --security-opt label=disable --security-opt unmask=/proc/* --security-opt seccomp=$st/seccomp-nested.json --read-only --tmpfs /tmp:rw,exec,size=2g,mode=1777 --tmpfs /run --env PODS_NESTED=1 --env XDG_RUNTIME_DIR=/run/user/30100 --env DOCKER_HOST=unix:///run/user/30100/podman/podman.sock --memory 10g --pids-limit 16384 -p 127.0.0.1:6769:6768 --extra sha123 STORE=$st "
+for f in "$f0" "$f1"; do
+  case "$f" in *" --uidmap 0:1:"*" --gidmap 0:1:"*" --memory 10g --pids-limit "*) r=ok ;; *) r=bad ;; esac
+  ok "flags: map from 0:1: and limits in both modes" "$r" ok
+done
+ok "flags: default mode passes no seccomp option" "$(printf '%s' "$f0" | grep -c seccomp)" 0
+
+# Nested start: the order of the checks, the profile in the store, the helper for the Docker API.
+nflow() { # PODS_CONTAINERS
+  rm -rf "$tmp/nf"; mkdir -p "$tmp/nf/server"; : >"$tmp/nf.log"
+  L=$tmp/nf.log NF=$tmp/nf PODS_SOURCED=1 PODS_STORE=$tmp/nf PODS_CONTAINERS=$1 sh -c '. ./op-server.sh; set +e
+    log() { echo "$*" >>"$L"; }
+    check_secrets() { :; }; running() { return 1; }; teardown() { :; }; update_image() { log update_image; }
+    nested_ids_files() { log nested_files; }; nested_live_map() { log nested_live; }
+    check_image() { log "check_image $1"; }; check_home() { log check_home; }
+    grant_secrets() { log grant; }; prepare_dirs() { log prepare_dirs; }; start_network() { log network; }
+    run_container() { log "run $SERVER_IMAGE $*"; }
+    pod() { case "$1 $2" in "image exists") ;; "image inspect") echo sha123 ;; "exec -d") log "$*" ;; esac; }
+    start_server' >/dev/null 2>&1
+  echo "$?"
+}
+ok "nested start: runs" "$(nflow 1)" 0
+ok "nested start: order" "$(cut -d' ' -f1-2 "$tmp/nf.log" | tr '\n' ' ')" "nested_files nested_live update_image check_image sha123 grant prepare_dirs check_home network run sha123 exec -d exec -d "
+ok "nested start: /state without setuid and devices" "$(grep -c '^run .*dst=/state,nosuid,nodev ' "$tmp/nf.log")" 1
+ok "nested start: orca-serve, then the Docker API helper" "$(grep '^exec' "$tmp/nf.log" | tr '\n' ' ')" "exec -d --user dev orca-pods-server orca-serve exec -d --user dev orca-pods-server orca-containers "
+ok "nested start: profile written to the store" "$(cmp -s "$tmp/nf/server/seccomp-nested.json" server/seccomp-nested.json; echo $?)" 0
+ok "default start: runs" "$(nflow 0)" 0
+ok "default start: no image check, no home check, no helper" "$(grep -c -e check_image -e check_home -e orca-containers "$tmp/nf.log")" 0
+ok "default start: image by tag, /state as today" "$(grep -c '^run orca-pods .*dst=/state -v' "$tmp/nf.log")" 1
+ok "default start: no profile in the store" "$(test -e "$tmp/nf/server/seccomp-nested.json" && echo found)" ""
+
+# The image check: the image lists its own setuid files and file capabilities.
+good='/usr/bin/newgidmap cap_setgid=ep
+/usr/bin/newuidmap cap_setuid=ep'
+imgcheck() { # scan output, scan exit code, [ID already in image-checked]
+  rm -rf "$tmp/ic"; mkdir -p "$tmp/ic"; : >"$tmp/ic.log"
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >"$tmp/ic/image-checked"
+  OUT=$1 RC=$2 IC=$tmp/ic L=$tmp/ic.log PODS_SOURCED=1 PODS_CONTAINERS=1 sh -c '. ./op-server.sh; set +e
+    STORE=$IC; pod() { echo "$*" >>"$L"; [ -z "$OUT" ] || printf "%s\n" "$OUT"; return "$RC"; }
+    check_image sha123' >/dev/null 2>&1
+  echo "$?"
+}
+ok "image check: the server image passes" "$(imgcheck "$good" 0)" 0
+ok "image check: result kept" "$(cat "$tmp/ic/image-checked")" sha123
+ok "image check: no network, no capability but reading, NNP" "$(grep -c -- '^run --rm --network none --cap-drop=all --cap-add=DAC_READ_SEARCH --security-opt no-new-privileges .* sha123 ' "$tmp/ic.log")" 1
+ok "image check: setuid file refused" "$(imgcheck "$good
+setid /usr/bin/sudo" 0)" 1
+ok "image check: a refused image is not kept" "$(test -e "$tmp/ic/image-checked" && echo kept)" ""
+ok "image check: third file capability refused" "$(imgcheck "$good
+/usr/bin/ping cap_net_raw=ep" 0)" 1
+ok "image check: missing capability refused" "$(imgcheck '/usr/bin/newgidmap cap_setgid=ep' 0)" 1
+ok "image check: missing getcap refused" "$(imgcheck "find: 'getcap': No such file or directory" 1)" 1
+ok "image check: find error refused" "$(imgcheck "$good
+find: '/x': Permission denied" 1)" 1
+ok "image check: failed scan refused" "$(imgcheck "$good" 1)" 1
+ok "image check: checked image not scanned again" "$(imgcheck '' 1 sha123):$(wc -l <"$tmp/ic.log")" "0:0"
+ok "image check: another image scanned" "$(imgcheck "$good" 0 sha999):$(cat "$tmp/ic/image-checked")" "0:sha123"
+
+# The home check: a setuid file of container root or setgid file of its group would work inside.
+homecheck() { # find output, find exit code
+  : >"$tmp/hc.log"
+  OUT=$1 RC=$2 L=$tmp/hc.log PODS_SOURCED=1 PODS_CONTAINERS=1 sh -c '. ./op-server.sh; set +e
+    pod() { echo "$*" >>"$L"; [ -z "$OUT" ] || printf "%s\n" "$OUT"; return "$RC"; }; check_home' >/dev/null 2>&1
+  echo "$?"
+}
+ok "home check: clean home" "$(homecheck '' 0)" 0
+ok "home check: searches setuid of ID 1 and setgid of group 1" "$(grep -c -e '-uid 1 -perm -4000' "$tmp/hc.log"):$(grep -c -e '-gid 1 -perm -2000' "$tmp/hc.log")" "1:1"
+ok "home check: setuid file refused" "$(homecheck /home/x/bin/sh 0)" 1
+ok "home check: find error refused" "$(homecheck '' 1)" 1
+
+# Port 80 only for a nested server, after every drop.
+fw() { # role PODS_CONTAINERS
+  PODS_SOURCED=1 PODS_CONTAINERS=$2 sh -c '. ./op-'"$1"'.sh; host_addresses() { echo 203.0.113.7; }; firewall_rules'
+}
+case "$(fw server 1)" in
+  *'240.0.0.0/4'*'} drop'*'ip daddr { 203.0.113.7 } drop'*'tcp dport 443 accept'*'tcp dport 80 accept'*'meta l4proto udp accept'*) r=ok ;; *) r=bad ;; esac
+ok "firewall: nested server accepts port 80 after the drops" "$r" ok
+ok "firewall: default server, no port 80" "$(fw server 0 | grep -c 'dport 80 ')" 0
+ok "firewall: client, no port 80" "$(fw client 1 | grep -c 'dport 80 ')" 0
+
+# Nested processes are visible in the PID namespace of the server, so the helpers must not touch them.
+ok "server/bin: pkill and pgrep stay in the own PID namespace" "$(grep -n -E '\b(pkill|pgrep)\b' server/bin/* | grep -v -e '--ns \$\$ --nslist pid' -e ':[0-9]*: *#')" ""
+
+# The nested profile is the pinned upstream default plus sethostname, setdomainname and chroot.
+if command -v jq >/dev/null; then
+  ok "seccomp: pinned upstream default" "$(sha256sum server/seccomp-default.json | cut -d' ' -f1)" 9b755202516aee4b45d9d411ab800c20fe4f7af97166a93b7f07d5b16c1a4ecd
+  three='["chroot", "setdomainname", "sethostname"]'
+  ok "seccomp: the three are conditional in the default" "$(jq --argjson t "$three" '[.syscalls[] | select(.action == "SCMP_ACT_ERRNO" and (.names - $t) != .names)] | length' server/seccomp-default.json)" 2
+  derived=$(jq -S --argjson t "$three" '.syscalls |= (map(if .action == "SCMP_ACT_ERRNO" then .names -= $t else . end | select(.names != []))
+    + [{names: $t, action: "SCMP_ACT_ALLOW"}])' server/seccomp-default.json)
+  ok "seccomp: nested profile differs only in the three syscalls" "$(jq -S . server/seccomp-nested.json 2>&1)" "$derived"
+else
+  echo "SKIP  seccomp profile, jq not installed"
+fi
+ok "seccomp: op-server.sh carries the profile" "$(PODS_SOURCED=1 sh -c '. ./op-server.sh; seccomp_profile' 2>&1 | cmp -s - server/seccomp-nested.json; echo $?)" 0
+
+ok "help names PODS_CONTAINERS" "$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" ./op-server.sh help | grep -c PODS_CONTAINERS)" 1
+ok "server.env.example names PODS_CONTAINERS" "$(grep -c '^#PODS_CONTAINERS=1$' server.env.example)" 1
+
 # Without a host UID for dev, nothing gets an ACL: setfacl with an empty user changes the owner entry.
 acl_log=$tmp/acl.log
 : >"$acl_log"
@@ -297,6 +405,7 @@ for f in dist/op-*; do
   cp "$f" "$tmp/standalone"
   (cd "$tmp" && ./standalone packages >/dev/null); ok "$f runs standalone" $? 0
 done
+ok "seccomp: the profile in dist/op-server is the repository file" "$(PODS_SOURCED=1 sh -c '. dist/op-server; seccomp_profile' 2>&1 | cmp -s - server/seccomp-nested.json; echo $?)" 0
 
 # Signed self-update: only a release with a valid signature replaces the script.
 mkdir -p "$tmp/rel" "$tmp/cfg"

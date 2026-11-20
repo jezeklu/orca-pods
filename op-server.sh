@@ -24,6 +24,8 @@ case "$CONTAINERS" in
   ""|0|1) ;;
   *) echo "PODS_CONTAINERS is 0 or 1." >&2; exit 1 ;;
 esac
+# A nested start replaces the tag with the ID it checked.
+SERVER_IMAGE=orca-pods
 HOME_DIR="$STORE/home"
 STATE_DIR="$STORE/state"
 UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/orca-pods-$INSTANCE.service"
@@ -199,15 +201,68 @@ prepare_dirs() { # home state
   ' sh "$1" "$2"
 }
 
+# Containers inside the server (PODS_CONTAINERS=1, see the README): room for the nested range,
+# newuidmap through file capabilities, so no NNP, a procfs the nested runtime can mount, and a
+# profile that allows sethostname, setdomainname and chroot. The limits bound nested containers too.
 run_container() { # options for mounts
+  ids=65536 caps=NET_ADMIN pids=4096 env=""
+  security="--security-opt no-new-privileges --security-opt label=disable"
+  if [ "$CONTAINERS" = 1 ]; then
+    ids=165536 caps=NET_ADMIN,SETUID,SETGID pids=16384
+    security="--security-opt label=disable --security-opt unmask=/proc/* --security-opt seccomp=$STORE/seccomp-nested.json"
+    env="--env PODS_NESTED=1 --env XDG_RUNTIME_DIR=/run/user/30100 --env DOCKER_HOST=unix:///run/user/30100/podman/podman.sock"
+  fi
+  # unmask=/proc/* is for Podman, not for the shell.
+  set -f
+  # shellcheck disable=SC2086 # option lists without whitespace in their values
   pod run -d --rm --name orca-pods-server --hostname "orca-pods-$INSTANCE" \
     --network orca-pods-net --dns 1.1.1.1 --dns 9.9.9.9 \
-    --uidmap 0:1:65536 --gidmap 0:1:65536 \
-    --device /dev/net/tun --cap-drop=all --cap-add=NET_ADMIN \
-    --security-opt no-new-privileges --security-opt label=disable \
-    --read-only --tmpfs /tmp:rw,exec,size=2g,mode=1777 --tmpfs /run \
-    --memory "$MEMORY" --pids-limit 4096 \
-    -p "127.0.0.1:$PORT:6768" "$@" orca-pods >/dev/null
+    --uidmap "0:1:$ids" --gidmap "0:1:$ids" \
+    --device /dev/net/tun --cap-drop=all --cap-add="$caps" \
+    $security \
+    --read-only --tmpfs /tmp:rw,exec,size=2g,mode=1777 --tmpfs /run $env \
+    --memory "$MEMORY" --pids-limit "$pids" \
+    -p "127.0.0.1:$PORT:6768" "$@" "$SERVER_IMAGE" >/dev/null
+  rc=$?
+  set +f
+  return "$rc"
+}
+
+# The profile of nested mode, the pinned upstream default plus three syscalls (see tests/unit.sh).
+# build.sh puts it into the release, so the host loads only a profile the signature covers.
+seccomp_profile() {
+  # @embed server/seccomp-nested.json
+  cat "$(dirname "$(readlink -f "$0")")/server/seccomp-nested.json"
+}
+
+# Without NNP every setuid file and file capability of the image works for dev. The image reports
+# on itself, which guards against a mistake such as an own PODS_IMAGE with sudo, not against a
+# hostile image. Reading needs DAC_READ_SEARCH, directories such as /home/dev are 0700.
+NESTED_CAPS='/usr/bin/newgidmap cap_setgid=ep
+/usr/bin/newuidmap cap_setuid=ep'
+check_image() { # image ID
+  [ "$(cat "$STORE/image-checked" 2>/dev/null)" != "$1" ] || return 0
+  if out=$(pod run --rm --network none --cap-drop=all --cap-add=DAC_READ_SEARCH --security-opt no-new-privileges \
+      --security-opt label=disable --read-only --uidmap 0:1:165536 --gidmap 0:1:165536 --user 0:0 \
+      --entrypoint find "$1" / -xdev -type f \( -perm /6000 -printf 'setid %p\n' -o -exec getcap {} + \) 2>&1) \
+    && [ "$(printf '%s\n' "$out" | LC_ALL=C sort)" = "$NESTED_CAPS" ]; then
+    printf '%s\n' "$1" >"$STORE/image-checked"
+    return 0
+  fi
+  printf '%s\n' "$out" >&2
+  echo "PODS_CONTAINERS=1 needs an image without setuid files and with file capabilities only on newuidmap and newgidmap, the server will not start." >&2
+  return 1
+}
+
+# Container root is ID 1 of the user namespace. Its setuid files in the home, or setgid files of
+# its group, would work for dev without NNP. The container is stopped meanwhile.
+check_home() {
+  if ! out=$(pod unshare find "$HOME_DIR" -xdev -type f \( -uid 1 -perm -4000 -o -gid 1 -perm -2000 \) -print 2>&1) \
+    || [ -n "$out" ]; then
+    printf '%s\n' "$out" >&2
+    echo "The home has setuid or setgid files of container root, the server will not start. Remove them with: $prog shell" >&2
+    return 1
+  fi
 }
 
 host_mounts() {
@@ -247,8 +302,17 @@ start_server() {
   trap 'teardown; exit 1' HUP INT TERM
   update_image
   pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; teardown; exit 1; }
+  state_opts=""
+  if [ "$CONTAINERS" = 1 ]; then
+    # The check and the run use one ID, so a new tag in between changes nothing.
+    SERVER_IMAGE=$(pod image inspect --format '{{.Id}}' orca-pods)
+    check_image "$SERVER_IMAGE" || { teardown; exit 1; }
+    seccomp_profile >"$STORE/seccomp-nested.json"
+    state_opts=,nosuid,nodev
+  fi
   grant_secrets
   prepare_dirs "$HOME_DIR" "$STATE_DIR"
+  [ "$CONTAINERS" != 1 ] || check_home || { teardown; exit 1; }
   # A failed firewall ends here, before the workload exists.
   if ! start_network; then
     echo "The firewall did not load, the server will not start." >&2
@@ -260,11 +324,12 @@ start_server() {
   [ -s "$STORE/machine-id" ] || { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; echo; } >"$STORE/machine-id"
   # shellcheck disable=SC2046 # one option per line, paths without whitespace are checked below
   run_container --mount "type=bind,src=$HOME_DIR,dst=/home/dev" \
-    --mount "type=bind,src=$STATE_DIR,dst=/state" \
+    --mount "type=bind,src=$STATE_DIR,dst=/state$state_opts" \
     -v "$STORE/machine-id:/etc/machine-id:ro" -v "$STORE/machine-id:/var/lib/dbus/machine-id:ro" \
     -v "$SECRETS:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   trap - HUP INT TERM
   pod exec -d --user dev orca-pods-server orca-serve >/dev/null
+  [ "$CONTAINERS" != 1 ] || pod exec -d --user dev orca-pods-server orca-containers >/dev/null
   # Offline start must not fail on this, runtimes for projects are not needed to reach the server.
   [ -z "$RUNTIMES" ] || echo "Installing $RUNTIMES if missing..."
   # shellcheck disable=SC2086 # list of runtimes
@@ -633,7 +698,8 @@ Maintenance
   help                This help.
 
 Settings  $CONFIG
-          PODS_SECRETS_DIR, PODS_PORT, PODS_INSTANCE, PODS_RUNTIMES, PODS_TOOLS, ...
+          PODS_SECRETS_DIR, PODS_PORT, PODS_INSTANCE, PODS_RUNTIMES, PODS_TOOLS,
+          PODS_CONTAINERS, ...
 Data      $STORE
 More      https://github.com/jezeklu/orca-pods#readme
 USAGE

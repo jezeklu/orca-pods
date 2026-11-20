@@ -234,6 +234,7 @@ Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later chang
 | `PODS_RUNTIMES` | empty | Runtimes next to the image Node, installed by mise at start, for example `node@24 python@3.13`. See [Node and other runtimes](#node-and-other-runtimes). |
 | `PODS_PORT` | `6769` | Port on `127.0.0.1` for a local Orca. |
 | `PODS_MEMORY` | `10g` | Memory limit of the container. |
+| `PODS_CONTAINERS` | empty | `1` runs rootless Podman and a Docker API inside the server. Needs more subordinate IDs on the host, run `op-server doctor` first. |
 | `PODS_IMAGE` | `docker.io/jezeklu/orca-pods:server` | Image to run, for forks. |
 | `PODS_PULL` | `1` | `0` starts with the local image without pulling a new one. |
 | `PODS_STORE` | `~/.local/share/orca-pods` | Where instance data lives, one subfolder per instance. |

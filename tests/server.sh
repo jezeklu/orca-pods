@@ -139,6 +139,28 @@ if PODS_SOURCED=1 sh -c '. ./op-server.sh; firewall_rules() { echo broken; }; pr
 fi
 if pod container exists orca-pods-server; then echo "FAIL  the container was created"; exit 1; fi
 echo "OK    no container with a broken firewall"
+
+if [ "${PODS_CONTAINERS:-}" = 1 ]; then
+  echo "--- nested mode refuses setuid files"
+  good=$(pod image inspect --format '{{.Id}}' orca-pods)
+  printf 'FROM %s\nRUN cp /bin/true /usr/local/bin/x && chmod u+s /usr/local/bin/x\n' "$good" \
+    | pod build -q --security-opt label=disable -t orca-pods-setuid -f - . >/dev/null
+  pod tag orca-pods-setuid orca-pods
+  refused=0
+  ./op-server.sh start >/dev/null 2>&1 || refused=1
+  pod tag "$good" orca-pods
+  pod rmi orca-pods-setuid >/dev/null
+  [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  an image with a setuid file started"; exit 1; }
+  echo "OK    an image with a setuid file is refused"
+  for mode in 1:1:4755 "$DEV_IN_NS:1:2755"; do
+    pod unshare sh -c 'cp /bin/true "$1/x" && chown "${2%:*}" "$1/x" && chmod "${2##*:}" "$1/x"' sh "$STORE/home" "$mode"
+    refused=0
+    ./op-server.sh start >/dev/null 2>&1 || refused=1
+    pod unshare rm -f "$STORE/home/x"
+    [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  a home with $mode started"; exit 1; }
+    echo "OK    a home with a file $mode is refused"
+  done
+fi
 ./op-server.sh start
 
 echo "--- crash and recovery"
