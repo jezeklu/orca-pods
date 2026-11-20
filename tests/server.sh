@@ -41,6 +41,36 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   node --version; pnpm --version; uv --version; mise --version
   su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/home/dev/.local/share/mise/shims:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
+pod run --rm -i --read-only --security-opt label=disable orca-pods sh <tests/server-image.sh
+# The start of a nested server, without the larger map: the runtime directory, the marker and the wrapper.
+nested_init() {
+  pod rm -f orca-pods-image-test >/dev/null 2>&1 || true
+  pod run -d --name orca-pods-image-test --security-opt label=disable --tmpfs /run \
+    --cap-drop=all --cap-add=NET_ADMIN,SETUID,SETGID --device /dev/net/tun "$@" orca-pods >/dev/null
+  # orca-server-init starts tailscaled after its own steps.
+  for _ in $(seq 20); do pod exec --user dev orca-pods-image-test pgrep -x tailscaled >/dev/null 2>&1 && return; sleep 1; done
+  echo "FAIL  tailscaled did not start"; exit 1
+}
+nested_init --env PODS_NESTED=1
+out=$(pod exec --user dev orca-pods-image-test sh -c '
+  stat -c "%U %a" /run/user/30100 /run/orca-pods/nested /run/user
+  podman --version >/dev/null && echo ran
+  stat -c "%U %a" /run/user/30100/podman ~/.local/share/containers ~/.local/share/containers/storage ~/.local/share/containers/storage/tmp
+' 2>&1 | tr '\n' ' ')
+pod rm -f orca-pods-image-test >/dev/null
+if [ "$out" = "dev 700 root 644 root 755 ran dev 755 dev 711 dev 711 dev 755 " ]; then
+  echo "OK    nested start: runtime directory, marker and the store of dev"
+else
+  echo "FAIL  nested start: $out"; exit 1
+fi
+nested_init
+out=$(pod exec --user dev orca-pods-image-test sh -c '[ ! -e /run/orca-pods ] || echo marker; ls -A /run/user; podman --version 2>&1' | tr '\n' ' ')
+pod rm -f orca-pods-image-test >/dev/null
+if [ "$out" = "Containers need PODS_CONTAINERS=1, see README. " ]; then
+  echo "OK    default start: no marker, no runtime directory"
+else
+  echo "FAIL  default start: $out"; exit 1
+fi
 ./op-server.sh test
 fi
 

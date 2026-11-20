@@ -1,0 +1,3 @@
+#!/bin/sh
+# Docker clients talk to the Podman of dev, see podman.
+exec /usr/local/bin/podman "$@"
