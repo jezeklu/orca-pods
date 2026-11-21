@@ -288,14 +288,25 @@ start_network() {
   firewall_rules | load_fw
 }
 
-start_server() {
-  if running; then echo "The server is already running."; return 0; fi
-  check_secrets
-  if [ "$CONTAINERS" = 1 ] && ! out=$(nested_ids_files && nested_live_map); then
+require_nested_ids() {
+  if ! out=$(nested_ids_files && nested_live_map); then
     printf '%s\n' "$out" >&2
     echo "PODS_CONTAINERS=1 needs the steps above, the server will not start." >&2
     exit 1
   fi
+}
+
+# The check and the run use one ID, so a new tag in between changes nothing.
+nested_image() {
+  SERVER_IMAGE=$(pod image inspect --format '{{.Id}}' orca-pods)
+  check_image "$SERVER_IMAGE" || return 1
+  seccomp_profile >"$STORE/seccomp-nested.json"
+}
+
+start_server() {
+  if running; then echo "The server is already running."; return 0; fi
+  check_secrets
+  [ "$CONTAINERS" != 1 ] || require_nested_ids
   # After a power cut the store still lists containers that no longer exist.
   teardown >/dev/null 2>&1
   set -e
@@ -304,10 +315,7 @@ start_server() {
   pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; teardown; exit 1; }
   state_opts=""
   if [ "$CONTAINERS" = 1 ]; then
-    # The check and the run use one ID, so a new tag in between changes nothing.
-    SERVER_IMAGE=$(pod image inspect --format '{{.Id}}' orca-pods)
-    check_image "$SERVER_IMAGE" || { teardown; exit 1; }
-    seccomp_profile >"$STORE/seccomp-nested.json"
+    nested_image || { teardown; exit 1; }
     state_opts=,nosuid,nodev
   fi
   grant_secrets
@@ -561,6 +569,62 @@ inside() { # name shell-code that must succeed
   if pod exec --user dev orca-pods-server sh -c "$1" >/dev/null 2>&1; then report 0 "$name"; else report 1 "$name"; fi
 }
 
+# Shell code as dev, as container root, or as root of a privileged nested container (nested mode).
+at() { # position shell-code
+  case "$1" in
+    dev) pod exec --user dev orca-pods-server sh -c "$2" ;;
+    root) root_exec sh -c "$2" ;;
+    nested) pod exec --user dev orca-pods-server podman exec orca-pods-nested-root sh -c "$2" ;;
+  esac
+}
+
+check_at() { # position name expected(pass|block) URL
+  if at "$1" "curl -ksS -o /dev/null -m 6 '$4'" >/dev/null 2>&1; then got=pass; else got=block; fi
+  if [ "$got" = "$3" ]; then report 0 "$2 ($got)"; else report 1 "$2 ($got)"; fi
+}
+
+inside_at() { # position name shell-code that must succeed
+  if at "$1" "$3" >/dev/null 2>&1; then report 0 "$2"; else report 1 "$2"; fi
+}
+
+# Opens for writing only files the kernel must refuse, so it writes nothing.
+PROC_CLOSED='for f in /proc/sys/kernel/core_pattern /proc/sys/kernel/modprobe /proc/sysrq-trigger; do
+  if (exec 3>>"$f") 2>/dev/null; then exit 1; fi
+done
+! head -c1 /proc/kcore >/dev/null 2>&1'
+# GNU find asks access(2). The test of busybox calls every file writable for root.
+PROC_WRITABLE='find /proc -path "/proc/[0-9]*" -prune -o -path /proc/self -prune -o -path /proc/thread-self -prune -o -type f -writable -print 2>/dev/null'
+# Limits of namespaces the writer owns. sys/user holds the namespace counts of an own user namespace,
+# which the kernel also checks against every parent, so they cannot be raised past the outer limits.
+PROC_ALLOWED='^/proc/sys/user/max_[a-z_]*_namespaces$|^/proc/sys/user/max_(fanotify|inotify)_[a-z]*$|^/proc/sys/net/|^/proc/sys/fs/mqueue/|^/proc/sys/kernel/(msg|sem|shm)|^/proc/sys/kernel/(ns_last_pid|pid_max|auto_msgmni)$|^/proc/pressure/'
+
+# All IDs of every process in the cgroup of the server, nested ones included, are subordinate IDs.
+nested_ids_check() {
+  pid1=$(pod container inspect --format '{{.State.Pid}}' orca-pods-server)
+  cg=$(sed -n 's/^0:://p' "/proc/$pid1/cgroup")
+  pids=$(find "/sys/fs/cgroup$cg" -name cgroup.procs -exec cat {} + | sort -u)
+  sleeps=0 outside=""
+  for p in $pids; do
+    [ "$(cat "/proc/$p/comm" 2>/dev/null)" != sleep ] || sleeps=$((sleeps + 1))
+    for kind in Uid:"$SUBUID_FILE" Gid:"$SUBGID_FILE"; do
+      awk -v k="${kind%%:*}:" '$1 == k { print $2; print $3; print $4; print $5 }' "/proc/$p/status" 2>/dev/null \
+        | awk -v n="$(id -un)" -v u="$(id -u)" 'NR == FNR { split($0, f, ":"); if (f[1] == n || f[1] == u) { s[++c] = f[2]; l[c] = f[3] }; next }
+            { ok = 0; for (i = 1; i <= c; i++) if ($1 >= s[i] && $1 < s[i] + l[i]) ok = 1; if (!ok) print }' "${kind#*:}" - \
+        | sed "s|^|$p ${kind%%:*} |"
+    done
+  done >"$work/outside"
+  outside=$(sort -u "$work/outside" | tr '\n' ' ')
+  # Three nested containers run sleep, so the list holds nested processes and the check is not empty.
+  if [ -z "$outside" ] && [ "$sleeps" -ge 3 ]; then report 0 "every process has subordinate IDs only ($sleeps sleep processes seen)"
+  else report 1 "IDs outside the subordinate ranges: $outside(sleep processes: $sleeps)"; fi
+  if awk -v u="$(id -u)" '$2 <= u && u < $2 + $3 { f = 1 } END { exit !f }' "/proc/$pid1/uid_map" \
+    || awk -v g="$(id -g)" '$2 <= g && g < $2 + $3 { f = 1 } END { exit !f }' "/proc/$pid1/gid_map"; then
+    report 1 "the map of the server holds the host user"
+  else
+    report 0 "the map of the server does not hold the host user"
+  fi
+}
+
 # Runs on throwaway directories. The positive check switches the firewall off, so no data may be in reach.
 run_tests() {
   url=${1:-}; ctl=""
@@ -571,8 +635,14 @@ run_tests() {
     ctl="--resolve $host:443:$ip $url"
   fi
   running && { echo "The server is running and the tests need its place. Stop it: $prog stop" >&2; exit 1; }
+  [ "$CONTAINERS" != 1 ] || require_nested_ids
   teardown >/dev/null 2>&1
   set -e
+  state_opts=""
+  if [ "$CONTAINERS" = 1 ]; then
+    nested_image
+    state_opts=,nosuid,nodev
+  fi
   gw=$(ip route show default | awk 'NR==1{print $3}')
   hostip=$(ip route get 1.1.1.1 | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1)}')
   work=$STORE/test
@@ -603,10 +673,22 @@ run_tests() {
   firewall_rules | load_fw
   # shellcheck disable=SC2046 # one option per line, as at start
   run_container --mount "type=bind,src=$work/home,dst=/home/dev" \
-    --mount "type=bind,src=$work/state,dst=/state" \
+    --mount "type=bind,src=$work/state,dst=/state$state_opts" \
     -v "$work/secrets:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   pod exec -d --user dev orca-pods-server python3 -m http.server 6768 --directory /tmp >/dev/null
   sleep 3
+  if [ "$CONTAINERS" = 1 ]; then
+    pod exec -d --user dev orca-pods-server orca-containers >/dev/null
+    # A default nested container, one that does not map dev, and root of a privileged one,
+    # the strongest position in a nested server.
+    at dev 'for _ in $(seq 20); do [ -e /run/orca-pods/nested ] && break; sleep 1; done
+      podman run -d --name orca-pods-nested-root --privileged --network host --pid host -v /state:/state \
+        docker.io/library/alpine sleep infinity
+      podman exec orca-pods-nested-root apk add -q curl findutils
+      podman run -d --name orca-pods-nested docker.io/library/alpine sleep infinity
+      podman run -d --name orca-pods-nested-map --uidmap 0:1:65536 --gidmap 0:1:65536 docker.io/library/alpine sleep infinity' >/dev/null \
+      || { echo "FAIL  cannot start the nested containers"; exit 1; }
+  fi
 
   brgw=$(root_exec sh -c "ip route | awk '/default/{print \$3}'")
   [ -n "$brgw" ] || { echo "FAIL  cannot find the container gateway"; exit 1; }
@@ -620,7 +702,8 @@ run_tests() {
   [ -n "$targets" ] || echo "SKIP  no other host address answers on 443"
   n=0; for a in $targets; do n=$((n + 1)); check "host address $n on 443" block "http://$a:443"; done
   [ -z "$ctl" ] || check "control target" block $ctl
-  check "http example.com" block http://example.com
+  # Plain HTTP is open in nested mode, for apt and image builds.
+  if [ "$CONTAINERS" = 1 ]; then check "http example.com" pass http://example.com; else check "http example.com" block http://example.com; fi
   check "https npm" pass https://registry.npmjs.org
   check "https github" pass https://github.com
   check "https pypi" pass https://pypi.org
@@ -645,6 +728,43 @@ run_tests() {
   ran=$(pod exec --user dev orca-pods-server /bin/cat /tmp/planted-0 2>/dev/null | sort -u | tr '\n' ' ')
   if [ -z "$ran" ]; then report 0 "root runs no program from ~/.local/bin"; else report 1 "root ran from ~/.local/bin: $ran"; fi
 
+  if [ "$CONTAINERS" = 1 ]; then
+    echo "--- nested mode: as dev, as container root and as root of a privileged nested container"
+    for p in dev root nested; do
+      check_at "$p" "$p: LAN gateway" block "http://$gw"
+      check_at "$p" "$p: host on 80" block "http://$hostip"
+      check_at "$p" "$p: host" block "http://$hostip:18767"
+      check_at "$p" "$p: bridge" block "http://$brgw"
+      check_at "$p" "$p: host map 169.254.1.2" block "http://169.254.1.2:18767"
+      check_at "$p" "$p: http example.com" pass http://example.com
+      check_at "$p" "$p: https github" pass https://github.com
+      inside_at "$p" "$p: no host socket or runtime directory" "test ! -e /run/podman && test ! -e /var/run/docker.sock && test ! -e /run/user/$(id -u)"
+      inside_at "$p" "$p: core_pattern, modprobe, sysrq-trigger and kcore closed" "$PROC_CLOSED"
+    done
+    for p in root nested; do
+      # find fails on the directories it may not enter, the list is what counts.
+      w=$(at "$p" "$PROC_WRITABLE") || true
+      extra=$(printf '%s\n' "$w" | grep -vE "$PROC_ALLOWED" | grep . | tr '\n' ' ')
+      # Some allowed files are writable in every position, so an empty list cannot pass.
+      if [ -z "$extra" ] && [ -n "$w" ]; then report 0 "$p: writable in /proc only the allowlist"
+      else report 1 "$p: writable in /proc outside the allowlist: $extra"; fi
+    done
+    # The node key of Tailscale, readable for container root only.
+    inside_at root "container root: reads the Tailscale state" 'for _ in $(seq 10); do [ -s /state/tailscaled.state ] && break; sleep 1; done; cat /state/tailscaled.state'
+    inside_at dev "dev: the Tailscale state is not readable" '! cat /state/tailscaled.state'
+    inside_at nested "nested root: the Tailscale state is not readable" '! cat /state/tailscaled.state'
+    inside_at dev "dev: bounding set NET_ADMIN, SETUID, SETGID" 'grep -q "^CapBnd:[[:space:]]*00000000000010c0$" /proc/self/status'
+    # Each try is a fresh user namespace, a map can be written once. The last one must work.
+    inside_at dev "dev: newuidmap maps only the range of dev" 'try() { unshare -U sleep 5 & p=$!; sleep 0.5; newuidmap "$p" "$@"; r=$?; kill "$p"; return "$r"; }
+      ! try 0 0 1 && ! try 0 1000 1 && ! try 0 100000 65537 && ! try 0 30100 1 1 0 1 && try 0 30100 1 1 100000 65536'
+    inside_at dev "dev: sethostname and chroot fail outside an own user namespace" '! hostname orca-pods-x && ! chroot / true'
+    inside_at dev "dev: sethostname and chroot work in an own user namespace" 'unshare -Ur -u hostname orca-pods-x && unshare -Ur chroot / true'
+    inside_at dev "dev: Docker API on a unix socket, no TCP listener" 's=/run/user/30100/podman/podman.sock
+      for _ in $(seq 20); do [ -S "$s" ] && break; sleep 1; done
+      [ "$(stat -c %U "$s")" = dev ] && ! ss -Hltnp | grep -q podman'
+    nested_ids_check
+  fi
+
   if curl -sS -m 6 -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null; then report 0 "127.0.0.1:$PORT from the host"; else report 1 "127.0.0.1:$PORT from the host"; fi
   if curl -sS -m 3 -o /dev/null "http://$hostip:$PORT/" 2>/dev/null; then report 1 "LAN IP port $PORT open"; else report 0 "LAN IP port $PORT closed"; fi
 
@@ -654,6 +774,7 @@ run_tests() {
   check "no fw: host map" pass "http://169.254.1.2:18767"
   n=0; for a in $targets; do n=$((n + 1)); check "no fw: host address $n on 443" pass "http://$a:443"; done
   [ -z "$ctl" ] || check "no fw: control target" pass $ctl
+  [ "$CONTAINERS" != 1 ] || check_at nested "no fw: nested root, host map" pass "http://169.254.1.2:18767"
 
   [ "$FAILS" -eq 0 ] && echo "RESULT: all OK" || { echo "RESULT: $FAILS failed"; exit 1; }
 }

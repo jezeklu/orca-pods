@@ -147,7 +147,7 @@ if [ "${PODS_CONTAINERS:-}" = 1 ]; then
     | pod build -q --security-opt label=disable -t orca-pods-setuid -f - . >/dev/null
   pod tag orca-pods-setuid orca-pods
   refused=0
-  ./op-server.sh start >/dev/null 2>&1 || refused=1
+  ./op-server.sh start 2>&1 | grep -q '^setid /usr/local/bin/x$' && refused=1
   pod tag "$good" orca-pods
   pod rmi orca-pods-setuid >/dev/null
   [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  an image with a setuid file started"; exit 1; }
@@ -155,7 +155,7 @@ if [ "${PODS_CONTAINERS:-}" = 1 ]; then
   for mode in 1:1:4755 "$DEV_IN_NS:1:2755"; do
     pod unshare sh -c 'cp /bin/true "$1/x" && chown "${2%:*}" "$1/x" && chmod "${2##*:}" "$1/x"' sh "$STORE/home" "$mode"
     refused=0
-    ./op-server.sh start >/dev/null 2>&1 || refused=1
+    ./op-server.sh start 2>&1 | grep -q 'setuid or setgid files of container root' && refused=1
     pod unshare rm -f "$STORE/home/x"
     [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  a home with $mode started"; exit 1; }
     echo "OK    a home with a file $mode is refused"
