@@ -79,6 +79,7 @@ audio_tests() {
 
 run_tests() {
   url=${1:-}; ctl=""
+  nested_note
   if [ -n "$url" ]; then
     host=${url#*://}; host=${host%%/*}
     ip=$(getent ahostsv4 "$host" | awk 'NR==1{print $1}')

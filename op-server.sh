@@ -628,6 +628,7 @@ nested_ids_check() {
 # Runs on throwaway directories. The positive check switches the firewall off, so no data may be in reach.
 run_tests() {
   url=${1:-}; ctl=""
+  nested_note
   if [ -n "$url" ]; then
     host=${url#*://}; host=${host%%/*}
     ip=$(getent ahostsv4 "$host" | awk 'NR==1{print $1}')

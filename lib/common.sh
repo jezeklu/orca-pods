@@ -122,6 +122,12 @@ NFT
 NFT
 }
 
+# Inside a server with PODS_CONTAINERS=1 its firewall blocks the same targets, so a pass proves less.
+NESTED_MARKER=/run/orca-pods/nested
+nested_note() {
+  [ ! -e "$NESTED_MARKER" ] || echo "WARNING: inside a server with containers the outer firewall also blocks the LAN and the host, so these checks prove less. The firewall test that counts is ./test.sh vm."
+}
+
 # Holds the rootless network namespace open, so the firewall exists before the workload starts.
 net_up() {
   pod network exists orca-pods-net || pod network create --disable-dns --interface-name br-orca-pods orca-pods-net >/dev/null

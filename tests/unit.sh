@@ -312,6 +312,17 @@ ok "seccomp: op-server.sh carries the profile" "$(PODS_SOURCED=1 sh -c '. ./op-s
 ok "help names PODS_CONTAINERS" "$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" ./op-server.sh help | grep -c PODS_CONTAINERS)" 1
 ok "server.env.example names PODS_CONTAINERS" "$(grep -c '^#PODS_CONTAINERS=1$' server.env.example)" 1
 
+# Inside a server with containers the outer firewall blocks the same targets, the tests say so.
+NESTED_MARKER=$tmp/nested-marker
+ok "no note outside a nested server" "$(nested_note)" ""
+: >"$NESTED_MARKER"
+case "$(nested_note)" in "WARNING: "*"outer firewall"*"./test.sh vm"*) r=ok ;; *) r=bad ;; esac
+ok "note inside a nested server" "$r" ok
+rm -f "$NESTED_MARKER"
+for f in op-server.sh dev.sh; do
+  ok "$f: isolation tests print the note" "$(sed -n '/^run_tests() {/,/^}/p' "$f" | grep -c '^  nested_note$')" 1
+done
+
 # Without a host UID for dev, nothing gets an ACL: setfacl with an empty user changes the owner entry.
 acl_log=$tmp/acl.log
 : >"$acl_log"
