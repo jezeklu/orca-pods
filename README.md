@@ -40,7 +40,7 @@ Rootless network namespace + firewall ── orca-pods-server container
 - [What the containers get from the host](#what-the-containers-get-from-the-host)
 - [Client](#client): [first run](#first-run), [daily use](#daily-use), [security boundary](#client-security-boundary)
 - [Tailscale policy](#tailscale-policy)
-- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [projects](#projects), [coding agents](#coding-agents), [skills](#skills), [Git and GitHub](#git-and-github), [updates](#updates), [security boundary](#server-security-boundary)
+- [Server](#server): [configuration](#configuration), [install](#what-install-touches), [projects](#projects), [coding agents](#coding-agents), [skills](#skills), [Git and GitHub](#git-and-github), [containers inside](#containers-inside-the-server), [updates](#updates), [security boundary](#server-security-boundary)
 - [Development](#development), [Tests](#tests), [CI/CD](#cicd)
 - [Contributing and security](#contributing-and-security), [License](#license)
 
@@ -113,7 +113,7 @@ This is the whole interface between the host and each container. Nothing else fr
 **Both**
 
 - The root file system is read-only, `/tmp` and `/run` are tmpfs.
-- No capabilities except `NET_ADMIN` for Tailscale, and `no-new-privileges`.
+- No capabilities except `NET_ADMIN` for Tailscale, and `no-new-privileges`. A server with `PODS_CONTAINERS=1` differs, see [Containers inside the server](#containers-inside-the-server).
 - User IDs are mapped into your subordinate range, so `dev` in the container is not your host user.
 - The firewall in the rootless network namespace allows only outbound TCP 443 and UDP, never the LAN, the VPN or the host. Neither container starts without it.
 
@@ -234,7 +234,7 @@ Without the file, `install` creates it with `PODS_SECRETS_DIR` only. Later chang
 | `PODS_RUNTIMES` | empty | Runtimes next to the image Node, installed by mise at start, for example `node@24 python@3.13`. See [Node and other runtimes](#node-and-other-runtimes). |
 | `PODS_PORT` | `6769` | Port on `127.0.0.1` for a local Orca. |
 | `PODS_MEMORY` | `10g` | Memory limit of the container. |
-| `PODS_CONTAINERS` | empty | `1` runs rootless Podman and a Docker API inside the server. Needs more subordinate IDs on the host, run `op-server doctor` first. |
+| `PODS_CONTAINERS` | empty | `1` runs rootless Podman and a Docker API inside the server. Needs more subordinate IDs on the host, see [Containers inside the server](#containers-inside-the-server). |
 | `PODS_IMAGE` | `docker.io/jezeklu/orca-pods:server` | Image to run, for forks. |
 | `PODS_PULL` | `1` | `0` starts with the local image without pulling a new one. |
 | `PODS_STORE` | `~/.local/share/orca-pods` | Where instance data lives, one subfolder per instance. |
@@ -338,6 +338,51 @@ Other versions and languages live in `/home/dev/.local/share/mise` and survive a
 
 `npm install -g --prefix ~/.local <package>` and `uv tool install <package>` put tools into `/home/dev/.local/bin`. The system is read-only and there is no `sudo`, so a package from the distribution goes into the `Dockerfile` and comes with the next image. Forks set their own image with `PODS_IMAGE`.
 
+### Containers inside the server
+
+With `PODS_CONTAINERS=1`, `dev` can run rootless Podman inside the server: `podman` and `docker` commands, image builds, and a Docker API for testcontainers and devcontainers on `/run/user/30100/podman/podman.sock` (`DOCKER_HOST` points to it). The API listens on that unix socket only. It is the Podman of `dev` and gives nothing beyond what `dev` can do with `podman` directly. Without the setting, `podman` and `docker` only print a hint.
+
+**Host setup.** Nested containers need 65 536 IDs of their own, so the server needs 165 536 subordinate IDs instead of 65 536:
+
+| IDs in the server | Used by |
+|---|---|
+| 0 | container root, subordinate ID 1 on the host |
+| 30100 | `dev` |
+| 100000 to 165535 | the nested containers of `dev` |
+
+`PODS_CONTAINERS=1 op-server doctor` checks this and prints the one command that adds a free range, for example `sudo usermod --add-subuids 165536-296607 --add-subgids 165536-296607 <user>`. Read it and run it yourself, `op-server` never uses `sudo`. Then the running user namespace has to grow:
+
+1. Stop every rootless container of the user: all servers, the client and any other. A container that runs during the next step can no longer be stopped normally.
+2. Run `podman system migrate`.
+3. Set `PODS_CONTAINERS=1` in the settings and run `op-server restart`. `start` refuses to run while the range or the running map is too small, and `doctor` says why.
+
+If a container was left running, `podman stop` fails with "operation not permitted". The way out without `sudo`: `nsenter -t <PID of its conmon> -U --preserve-credentials kill -9 <PID of the container>`, then `podman rm`.
+
+On hosts where `nsswitch.conf` reads subordinate IDs or accounts from SSSD or LDAP, `doctor` cannot see every used ID and prints no command. Pick a range by hand that no user, group or other subordinate range uses, a multiple of 65 536 in size, below 524 288 unless `SUB_UID_MIN` starts above.
+
+**What changes in the container.** Each point weakens the default isolation a little, the firewall and the user namespace stay as they are:
+
+- No `no-new-privileges`, because `newuidmap` and `newgidmap` need their file capabilities. So the image has no setuid or setgid file, and `start` checks this before every new image. It runs `find` and `getcap` from the image itself, which guards against a mistake such as an own `PODS_IMAGE` with `sudo`, not against a hostile image. `start` also refuses a home that holds a setuid or setgid file of container root, and mounts `/state` with `nosuid,nodev`.
+- Container root holds `SETUID` and `SETGID`. Treat it as reachable by an agent. It is still only a subordinate ID on the host, cannot change the firewall, and reads the Tailscale state in `/state`, so it can copy the node key. After a suspected compromise, remove the node in the Tailscale admin console and run `op-server login` again. Tagged nodes do not expire on their own.
+- `/proc` is not masked, so nested containers can mount their own. The kernel still refuses writes outside the namespaces of the container, the isolation tests check this file by file. Readable now: `/proc/interrupts` of the host, whose interrupt counts are also in `/proc/stat`, and hardware details in `/proc/acpi`, `/proc/irq` and `/proc/scsi`.
+- A seccomp profile of its own: the upstream default of Podman, pinned in `server/seccomp-default.json`, plus `sethostname`, `setdomainname` and `chroot`. The kernel still allows them only inside a nested namespace. The profile is part of the signed `op-server`.
+- The firewall also allows plain HTTP on TCP 80, for `apt` in image builds, after every rule that blocks the LAN, the VPN and the host.
+- `--pids-limit` is 16384. The memory and process limits of the server hold for all nested containers together. Their own `--memory` and `--pids-limit` are accepted and have no effect.
+
+**Limits.** No container inside a nested container, no KVM, no FUSE. `/tmp` and the root file system stay as they are, nested images live in `/home/dev/.local/share/containers`. The home has no quota, so nested images can fill the disk of the host. On Debian and Ubuntu the AppArmor profile `pasta` of the host logs a refused signal when a nested network goes away, which is harmless.
+
+**Turning it off.** Files of nested containers belong to IDs of the added range. Once the range is gone, only `sudo` can delete them. So in this order:
+
+1. With the setting still on: `op-server shell -- podman system reset`.
+2. Remove `PODS_CONTAINERS=1` and run `op-server restart`.
+3. Only then remove the range: `sudo usermod --del-subuids 165536-296607 --del-subgids 165536-296607 <user>`, with the range `doctor` printed, and `podman system migrate` with every container stopped.
+
+If the server no longer starts for step 1, delete the store from the host while the server is stopped. The check refuses a link in the path, which the container could have planted:
+
+```sh
+podman unshare sh -c 'cd "$1" && for d in .local .local/share; do [ -d "$d" ] && [ ! -L "$d" ] || exit 1; done && rm -rf .local/share/containers' sh ~/.local/share/orca-pods/server/home
+```
+
 ### Updates
 
 ```sh
@@ -383,7 +428,8 @@ Its fingerprint is `SHA256:WKyUvoglDCAUU5y5ihiclriRkC22NoJ7nD4UOBT85oI`. Release
 
 ### Server security boundary
 
-- The container cannot reach the host or the LAN, only outbound TCP 443 and UDP. It does not start without the firewall.
+- The container cannot reach the host or the LAN, only outbound TCP 443 and UDP, with `PODS_CONTAINERS=1` also TCP 80. It does not start without the firewall.
+- Nested containers are no boundary against an agent: `dev` can start them privileged. The boundary is the server container, see [Containers inside the server](#containers-inside-the-server).
 - The port for a local Orca listens only on `127.0.0.1` and requires a pairing code.
 - Projects in the container see each other. An agent can change anything in `/home/dev`, including Orca, but nothing outside the container.
 - An agent can read the secrets in `/secrets` and send them out over HTTPS. Put there only what agents need.
@@ -410,6 +456,7 @@ Everything runs locally, GitHub Actions runs checks on pull requests and VM test
 ./test.sh unit         # unit tests only
 ./test.sh vm [distro]  # isolation tests in a VM: fedora (default), debian, ubuntu, archlinux
 ./test.sh server       # server role: image, isolation tests, a real Orca in the container
+PODS_CONTAINERS=1 ./test.sh server  # the same with containers inside, needs the larger range
 ./test.sh vm-server [distro]  # the same in a VM, including the systemd unit
 ./test.sh clean        # remove test images and VMs, leave other images alone
 ```
