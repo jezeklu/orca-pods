@@ -13,6 +13,8 @@ PODS_PORT=16769
 PODS_PULL=0
 PODS_SECRETS_DIR="$sec"
 CFG
+# The unit reads only the settings file.
+[ -z "${PODS_CONTAINERS:-}" ] || echo "PODS_CONTAINERS=$PODS_CONTAINERS" >>"$cfg"
 export PODS_CONFIG="$cfg"
 ./op-server.sh install
 [ "$(systemctl --user is-enabled orca-pods-server-test.service)" = enabled ]

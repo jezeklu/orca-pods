@@ -457,6 +457,7 @@ Everything runs locally, GitHub Actions runs checks on pull requests and VM test
 ./test.sh vm [distro]  # isolation tests in a VM: fedora (default), debian, ubuntu, archlinux
 ./test.sh server       # server role: image, isolation tests, a real Orca in the container
 PODS_CONTAINERS=1 ./test.sh server  # the same with containers inside, needs the larger range
+PODS_CONTAINERS=1 ./test.sh vm-server [distro]  # the same in a VM, which adds the range doctor prints
 ./test.sh vm-server [distro]  # the same in a VM, including the systemd unit
 ./test.sh clean        # remove test images and VMs, leave other images alone
 ```

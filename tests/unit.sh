@@ -369,7 +369,8 @@ if [ -w /dev/kvm ]; then
   for tool in qemu-system-x86_64 qemu-img; do
     printf '#!/bin/sh\necho "%s $*" >>"%s"\n' "$tool" "$tmp/qemu.log" >"$tmp/vmbin/$tool"
   done
-  printf '#!/bin/sh\ncat >/dev/null\n' >"$tmp/vmbin/ssh"
+  # Keeps only the script that runs in the VM, not the copy of the repository.
+  printf '#!/bin/sh\ncase "$*" in *"bash -s") cat >>"%s" ;; *) cat >/dev/null ;; esac\n' "$tmp/ssh.log" >"$tmp/vmbin/ssh"
   chmod +x "$tmp/vmbin/"*
   vm_run() { : >"$tmp/qemu.log"; env PATH="$tmp/vmbin:$PATH" PODS_VM_DIR="$tmp/vm" "$@" tests/vm.sh debian </dev/null 2>&1; }
   for setting in PODS_VM_DISK=20 PODS_VM_MEMORY=lots PODS_VM_CPUS=0 PODS_VM_DIR=relative PODS_VM_KEEP=yes; do
@@ -385,6 +386,14 @@ if [ -w /dev/kvm ]; then
   line=$(printf '%s\n' "$out" | grep '^The VM keeps running. Log in with: ssh ')
   case "$line" in *" -i $tmp/vm/run-debian/key -p 20222 "*"UserKnownHostsFile=/dev/null"*" pods@127.0.0.1") r=ok ;; *) r=bad ;; esac
   ok "vm: PODS_VM_KEEP=1 prints the ssh command" "$r" ok
+  for setting in "PODS_CONTAINERS=yes PODS_VM_SERVER=1" PODS_CONTAINERS=1; do
+    # shellcheck disable=SC2086 # two settings
+    vm_run $setting >/dev/null; ok "vm: $setting rejected" $? 1
+    ok "vm: $setting starts nothing" "$(cat "$tmp/qemu.log")" ""
+  done
+  : >"$tmp/ssh.log"; vm_run PODS_VM_SERVER=1 PODS_CONTAINERS=1 >/dev/null
+  ok "vm: PODS_CONTAINERS=1 reaches the VM" "$(grep -c '^export PODS_CONTAINERS=1$' "$tmp/ssh.log")" 1
+  ok "vm: the VM adds the range doctor prints" "$(grep -c '^  add=.*op-server.sh doctor' "$tmp/ssh.log")" 1
 else
   echo "SKIP  vm settings, no access to /dev/kvm"
 fi
