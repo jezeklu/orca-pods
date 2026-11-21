@@ -227,7 +227,7 @@ nflow() { # PODS_CONTAINERS
     log() { echo "$*" >>"$L"; }
     check_secrets() { :; }; running() { return 1; }; teardown() { :; }; update_image() { log update_image; }
     nested_ids_files() { log nested_files; }; nested_live_map() { log nested_live; }
-    check_image() { log "check_image $1"; }; check_home() { log check_home; }
+    check_image() { log "check_image $1"; }; check_home() { log check_home; }; check_proc() { log "check_proc:$1"; }
     grant_secrets() { log grant; }; prepare_dirs() { log prepare_dirs; }; start_network() { log network; }
     run_container() { log "run $SERVER_IMAGE $*"; }
     pod() { case "$1 $2" in "image exists") ;; "image inspect") echo sha123 ;; "exec -d") log "$*" ;; esac; }
@@ -235,12 +235,13 @@ nflow() { # PODS_CONTAINERS
   echo "$?"
 }
 ok "nested start: runs" "$(nflow 1)" 0
-ok "nested start: order" "$(cut -d' ' -f1-2 "$tmp/nf.log" | tr '\n' ' ')" "nested_files nested_live update_image check_image sha123 grant prepare_dirs check_home network run sha123 exec -d exec -d "
+ok "nested start: order" "$(cut -d' ' -f1-2 "$tmp/nf.log" | tr '\n' ' ')" "nested_files nested_live update_image check_image sha123 grant prepare_dirs check_home network run sha123 check_proc:$tmp/nf/server/proc-warning exec -d exec -d "
 ok "nested start: /state without setuid and devices" "$(grep -c '^run .*dst=/state,nosuid,nodev ' "$tmp/nf.log")" 1
+ok "nested start: warning kept in the store" "$(grep -c "^check_proc:$tmp/nf/server/proc-warning$" "$tmp/nf.log")" 1
 ok "nested start: orca-serve, then the Docker API helper" "$(grep '^exec' "$tmp/nf.log" | tr '\n' ' ')" "exec -d --user dev orca-pods-server orca-serve exec -d --user dev orca-pods-server orca-containers "
 ok "nested start: profile written to the store" "$(cmp -s "$tmp/nf/server/seccomp-nested.json" server/seccomp-nested.json; echo $?)" 0
 ok "default start: runs" "$(nflow 0)" 0
-ok "default start: no image check, no home check, no helper" "$(grep -c -e check_image -e check_home -e orca-containers "$tmp/nf.log")" 0
+ok "default start: no image check, no home check, no helper" "$(grep -c -e check_image -e check_home -e check_proc -e orca-containers "$tmp/nf.log")" 0
 ok "default start: image by tag, /state as today" "$(grep -c '^run orca-pods .*dst=/state -v' "$tmp/nf.log")" 1
 ok "default start: no profile in the store" "$(test -e "$tmp/nf/server/seccomp-nested.json" && echo found)" ""
 
@@ -282,6 +283,37 @@ ok "home check: clean home" "$(homecheck '' 0)" 0
 ok "home check: searches setuid of ID 1 and setgid of group 1" "$(grep -c -e '-uid 1 -perm -4000' "$tmp/hc.log"):$(grep -c -e '-gid 1 -perm -2000' "$tmp/hc.log")" "1:1"
 ok "home check: setuid file refused" "$(homecheck /home/x/bin/sh 0)" 1
 ok "home check: find error refused" "$(homecheck '' 1)" 1
+
+# The /proc check after a nested start: container root may write only the allowlist and known
+# kernel leaks, which stay as a warning for status and doctor.
+proccheck() { # find output, [a warning left from the last start]
+  rm -rf "$tmp/pc"; mkdir -p "$tmp/pc"
+  [ -z "${2:-}" ] || echo old >"$tmp/pc/proc-warning"
+  OUT=$1 PC=$tmp/pc PODS_SOURCED=1 PODS_CONTAINERS=1 sh -c '. ./op-server.sh; set +e
+    root_exec() { printf "%s\n" "$OUT"; return 1; }; check_proc "$PC/proc-warning"' >"$tmp/pc.out" 2>&1
+  echo "$?"
+}
+allowed='/proc/sys/net/core/somaxconn
+/proc/sys/kernel/shmmax'
+ok "proc check: only the allowlist" "$(proccheck "$allowed" old):$(test -e "$tmp/pc/proc-warning" && echo kept)" "0:"
+ok "proc check: cad_pid starts with a warning" "$(proccheck "$allowed
+/proc/sys/kernel/cad_pid")" 0
+ok "proc check: cad_pid warning printed" "$(grep -c '^WARNING: .*cad_pid' "$tmp/pc.out")" 1
+ok "proc check: cad_pid warning kept" "$(grep -c 'cad_pid' "$tmp/pc/proc-warning")" 1
+ok "proc check: another file refused" "$(proccheck "$allowed
+/proc/sys/kernel/cad_pid
+/proc/sys/kernel/core_pattern")" 1
+ok "proc check: refusal names the file" "$(grep -c '^/proc/sys/kernel/core_pattern$' "$tmp/pc.out")" 1
+ok "proc check: empty list refused" "$(proccheck '')" 1
+warnshow() { # command
+  rm -rf "$tmp/ws"; mkdir -p "$tmp/ws"; echo 'WARNING: test leak' >"$tmp/ws/proc-warning"
+  WS=$tmp/ws PODS_SOURCED=1 PODS_CONTAINERS=1 sh -c '. ./op-server.sh; set +e
+    STORE=$WS; running() { :; }; tailscale_state() { :; }; orca_versions() { :; }; pod() { :; }
+    doctor() { :; }; nested_ids_files() { :; }; require_user() { :; }; prepare_store() { :; }; nested_live_map() { :; }
+    '"$1" 2>&1 | grep -c 'WARNING: test leak'
+}
+ok "proc check: status shows the warning" "$(warnshow show_status)" 1
+ok "proc check: doctor shows the warning" "$(warnshow server_doctor)" 1
 
 # Port 80 only for a nested server, after every drop.
 fw() { # role PODS_CONTAINERS

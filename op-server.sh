@@ -171,6 +171,7 @@ server_doctor() {
   else
     bad=1
   fi
+  proc_warning
   return "$bad"
 }
 
@@ -265,6 +266,37 @@ check_home() {
   fi
 }
 
+# GNU find asks access(2). The test of busybox calls every file writable for root.
+PROC_WRITABLE='find /proc -path "/proc/[0-9]*" -prune -o -path /proc/self -prune -o -path /proc/thread-self -prune -o -type f -writable -print 2>/dev/null'
+# Limits of namespaces the writer owns. sys/user holds the namespace counts of an own user namespace,
+# which the kernel also checks against every parent, so they cannot be raised past the outer limits.
+PROC_ALLOWED='^/proc/sys/user/max_[a-z_]*_namespaces$|^/proc/sys/user/max_(fanotify|inotify)_[a-z]*$|^/proc/sys/net/|^/proc/sys/fs/mqueue/|^/proc/sys/kernel/(msg|sem|shm)|^/proc/sys/kernel/(ns_last_pid|pid_max|auto_msgmni)$|^/proc/pressure/'
+# Some Ubuntu kernels let container root set kernel.cad_pid for the whole host, which only moves
+# the Ctrl-Alt-Del signal to a process of the container. Every other file stops the server.
+PROC_KNOWN='^/proc/sys/kernel/cad_pid$'
+# The kernel can change with every boot, so this runs at every nested start. find fails on the
+# directories it may not enter, and some allowed files are writable always, so an empty list fails.
+check_proc() { # file for the warning
+  w=$(root_exec sh -c "$PROC_WRITABLE") || true
+  extra=$(printf '%s\n' "$w" | grep -vE "$PROC_ALLOWED" | grep . || true)
+  unknown=$(printf '%s\n' "$extra" | grep -vE "$PROC_KNOWN" | grep . || true)
+  if [ -z "$w" ] || [ -n "$unknown" ]; then
+    [ -z "$unknown" ] || printf '%s\n' "$unknown" >&2
+    echo "Container root can write the files above in /proc, or the check failed. With PODS_CONTAINERS=1 the server will not start on this kernel." >&2
+    return 1
+  fi
+  if [ -n "$extra" ]; then
+    echo "WARNING: this kernel lets container root set kernel.cad_pid for the whole host, so a process in the container can catch Ctrl-Alt-Del of the host. See the README." | tee "$1" >&2
+  else
+    rm -f "$1"
+  fi
+}
+
+# Shown again by status and doctor, a start under systemd prints only to the journal.
+proc_warning() {
+  [ "$CONTAINERS" != 1 ] || [ ! -s "$STORE/proc-warning" ] || cat "$STORE/proc-warning" >&2
+}
+
 host_mounts() {
   [ ! -f "$HOME/.gitconfig" ] || printf '%s\n' "-v" "$HOME/.gitconfig:/etc/orca-pods/host.gitconfig:ro,noexec,nosuid,nodev"
 }
@@ -336,6 +368,7 @@ start_server() {
     -v "$STORE/machine-id:/etc/machine-id:ro" -v "$STORE/machine-id:/var/lib/dbus/machine-id:ro" \
     -v "$SECRETS:/secrets:ro,noexec,nosuid,nodev" $(host_mounts)
   trap - HUP INT TERM
+  [ "$CONTAINERS" != 1 ] || check_proc "$STORE/proc-warning" || { teardown; exit 1; }
   pod exec -d --user dev orca-pods-server orca-serve >/dev/null
   [ "$CONTAINERS" != 1 ] || pod exec -d --user dev orca-pods-server orca-containers >/dev/null
   # Offline start must not fail on this, runtimes for projects are not needed to reach the server.
@@ -383,6 +416,7 @@ orca_versions() {
 show_status() {
   if ! running; then echo "The server is not running."; return 1; fi
   echo "Server running on 127.0.0.1:$PORT."
+  proc_warning
   echo "Tailscale: $(tailscale_state || true)"
   orca_versions
   echo "Paired devices:"
@@ -592,11 +626,6 @@ PROC_CLOSED='for f in /proc/sys/kernel/core_pattern /proc/sys/kernel/modprobe /p
   if (exec 3>>"$f") 2>/dev/null; then exit 1; fi
 done
 ! head -c1 /proc/kcore >/dev/null 2>&1'
-# GNU find asks access(2). The test of busybox calls every file writable for root.
-PROC_WRITABLE='find /proc -path "/proc/[0-9]*" -prune -o -path /proc/self -prune -o -path /proc/thread-self -prune -o -type f -writable -print 2>/dev/null'
-# Limits of namespaces the writer owns. sys/user holds the namespace counts of an own user namespace,
-# which the kernel also checks against every parent, so they cannot be raised past the outer limits.
-PROC_ALLOWED='^/proc/sys/user/max_[a-z_]*_namespaces$|^/proc/sys/user/max_(fanotify|inotify)_[a-z]*$|^/proc/sys/net/|^/proc/sys/fs/mqueue/|^/proc/sys/kernel/(msg|sem|shm)|^/proc/sys/kernel/(ns_last_pid|pid_max|auto_msgmni)$|^/proc/pressure/'
 
 # All IDs of every process in the cgroup of the server, nested ones included, are subordinate IDs.
 nested_ids_check() {
@@ -745,11 +774,16 @@ run_tests() {
     for p in root nested; do
       # find fails on the directories it may not enter, the list is what counts.
       w=$(at "$p" "$PROC_WRITABLE") || true
-      extra=$(printf '%s\n' "$w" | grep -vE "$PROC_ALLOWED" | grep . | tr '\n' ' ')
+      # The known kernel leaks only for container root, the start warns about them.
+      allowed=$PROC_ALLOWED; [ "$p" != root ] || allowed="$PROC_ALLOWED|$PROC_KNOWN"
+      extra=$(printf '%s\n' "$w" | grep -vE "$allowed" | grep . | tr '\n' ' ')
       # Some allowed files are writable in every position, so an empty list cannot pass.
       if [ -z "$extra" ] && [ -n "$w" ]; then report 0 "$p: writable in /proc only the allowlist"
       else report 1 "$p: writable in /proc outside the allowlist: $extra"; fi
     done
+    if out=$(check_proc "$work/proc-warning" 2>&1); then report 0 "the start check accepts this kernel"
+    else report 1 "the start check refuses this kernel: $(printf '%s\n' "$out" | tr '\n' ' ')"; fi
+    [ ! -s "$work/proc-warning" ] || cat "$work/proc-warning"
     # The node key of Tailscale, readable for container root only.
     inside_at root "container root: reads the Tailscale state" 'for _ in $(seq 10); do [ -s /state/tailscaled.state ] && break; sleep 1; done; cat /state/tailscaled.state'
     inside_at dev "dev: the Tailscale state is not readable" '! cat /state/tailscaled.state'
