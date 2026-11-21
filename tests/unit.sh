@@ -344,6 +344,26 @@ ok "seccomp: op-server.sh carries the profile" "$(PODS_SOURCED=1 sh -c '. ./op-s
 ok "help names PODS_CONTAINERS" "$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" ./op-server.sh help | grep -c PODS_CONTAINERS)" 1
 ok "server.env.example names PODS_CONTAINERS" "$(grep -c '^#PODS_CONTAINERS=1$' server.env.example)" 1
 
+# The README command that deletes the nested store from the host, run as written. A fake podman
+# drops "unshare", the paths below the home are what the container could have planted.
+delcmd=$(sed -n '/^If the server no longer starts for step 1/,/^```$/p' README.md | grep '^podman unshare ')
+ok "README delete command: default home of the server" "$(printf '%s' "$delcmd" | grep -c ' sh ~/.local/share/orca-pods/server/home$')" 1
+mkdir -p "$tmp/fp" && printf '%s\n' '#!/bin/sh' 'shift; exec "$@"' >"$tmp/fp/podman" && chmod 755 "$tmp/fp/podman"
+delrun() { # home
+  PATH=$tmp/fp:$PATH sh -c "${delcmd% *} \"\$1\"" sh "$1" >/dev/null 2>&1
+  echo "$?"
+}
+victim() { rm -rf "$tmp/victim"; mkdir -p "$tmp/victim/share/containers"; echo x >"$tmp/victim/share/containers/f"; }
+rm -rf "$tmp/dh"; mkdir -p "$tmp/dh/.local/share/containers/storage"; echo x >"$tmp/dh/.local/share/containers/storage/f"
+ok "README delete command: deletes the store" "$(delrun "$tmp/dh"):$(test -e "$tmp/dh/.local/share/containers" && echo left)" "0:"
+ok "README delete command: keeps the rest of the home" "$(test -d "$tmp/dh/.local/share" && echo kept)" kept
+victim; rm -rf "$tmp/dh"; mkdir -p "$tmp/dh"; ln -s "$tmp/victim" "$tmp/dh/.local"
+ok "README delete command: link at .local refused" "$(delrun "$tmp/dh"):$(cat "$tmp/victim/share/containers/f")" "1:x"
+victim; rm -rf "$tmp/dh"; mkdir -p "$tmp/dh/.local"; ln -s "$tmp/victim/share" "$tmp/dh/.local/share"
+ok "README delete command: link at .local/share refused" "$(delrun "$tmp/dh"):$(cat "$tmp/victim/share/containers/f")" "1:x"
+victim; rm -rf "$tmp/dh"; mkdir -p "$tmp/dh/.local/share"; ln -s "$tmp/victim/share/containers" "$tmp/dh/.local/share/containers"
+ok "README delete command: link at containers removes only the link" "$(delrun "$tmp/dh"):$(cat "$tmp/victim/share/containers/f"):$(test -L "$tmp/dh/.local/share/containers" && echo left)" "0:x:"
+
 # Inside a server with containers the outer firewall blocks the same targets, the tests say so.
 NESTED_MARKER=$tmp/nested-marker
 ok "no note outside a nested server" "$(nested_note)" ""
