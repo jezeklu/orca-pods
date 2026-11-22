@@ -101,6 +101,7 @@ jobs:
               command -v "$tool"
             done
             /usr/bin/podman --version
+            docker-compose version
             test "$(command -v podman)" = /usr/local/bin/podman
           '
 

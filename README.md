@@ -342,7 +342,7 @@ Other versions and languages live in `/home/dev/.local/share/mise` and survive a
 
 ### Containers inside the server
 
-With `PODS_CONTAINERS=1`, `dev` can run rootless Podman inside the server: `podman` and `docker` commands, image builds, and a Docker API for testcontainers and devcontainers on `/run/user/30100/podman/podman.sock` (`DOCKER_HOST` points to it). The API listens on that unix socket only. It is the Podman of `dev` and gives nothing beyond what `dev` can do with `podman` directly. Without the setting, `podman` and `docker` only print a hint.
+With `PODS_CONTAINERS=1`, `dev` can run rootless Podman inside the server: `podman` and `docker` commands, `docker compose` (Docker Compose v2 from the image, run against Podman), image builds, and a Docker API for testcontainers and devcontainers on `/run/user/30100/podman/podman.sock` (`DOCKER_HOST` points to it). The API listens on that unix socket only. It is the Podman of `dev` and gives nothing beyond what `dev` can do with `podman` directly. Without the setting, `podman` and `docker` only print a hint.
 
 **Host setup.** Nested containers need 65 536 IDs of their own, so the server needs 165 536 subordinate IDs instead of 65 536:
 
