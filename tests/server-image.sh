@@ -6,7 +6,7 @@ bad=0
 fail() { echo "FAIL  $*"; bad=1; }
 
 for tool in /usr/bin/podman /usr/bin/docker /usr/bin/newuidmap /usr/bin/newgidmap /usr/bin/pasta \
-  /usr/sbin/nft /usr/bin/setfacl /usr/sbin/getcap /usr/bin/crun /usr/bin/shellcheck /usr/bin/setpriv; do
+  /usr/sbin/nft /usr/local/lib/docker/cli-plugins/docker-compose /usr/bin/setfacl /usr/sbin/getcap /usr/bin/crun /usr/bin/shellcheck /usr/bin/setpriv; do
   [ -x "$tool" ] || fail "missing $tool"
 done
 for tool in netavark aardvark-dns; do
@@ -33,7 +33,7 @@ fi
 
 conf=/etc/containers/containers.conf
 ok=1
-for line in 'cgroup_manager = "cgroupfs"' 'events_logger = "file"' 'log_driver = "k8s-file"' 'image_copy_tmp_dir = "storage"'; do
+for line in 'cgroup_manager = "cgroupfs"' 'events_logger = "file"' 'log_driver = "k8s-file"' 'image_copy_tmp_dir = "storage"' 'compose_warning_logs = false'; do
   grep -qxF "$line" "$conf" 2>/dev/null || { fail "$conf lacks $line"; ok=0; }
 done
 grep -rqxF 'unqualified-search-registries = ["docker.io"]' /etc/containers/registries.conf /etc/containers/registries.conf.d 2>/dev/null \
