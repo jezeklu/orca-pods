@@ -4,7 +4,9 @@ Everything in the repository is in English: code, comments, script output, docum
 
 ## Branches
 
-Nothing is committed to `main` directly. Each feature or fix gets its own branch from `main`, named `<type>/<short-name>`, for example `feat/help`, and reaches `main` through a pull request once the tests pass. A pull request is merged as a fast-forward, so the signed commits stay as they are.
+Nothing is committed to `main` directly, the repository rejects such a push. Each feature or fix gets its own branch from `main`, named `<type>/<short-name>`, for example `feat/help`, and reaches `main` through a pull request once the `unit` and `distro` checks pass on the current `main`.
+
+The maintainer merges a pull request on GitHub as a squash. `main` gets one commit per pull request, signed by GitHub, and the title of the pull request becomes its summary, so the title follows the commit rules below.
 
 ## Commit messages
 
