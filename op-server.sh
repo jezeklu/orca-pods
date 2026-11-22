@@ -270,7 +270,8 @@ check_home() {
 PROC_WRITABLE='find /proc -path "/proc/[0-9]*" -prune -o -path /proc/self -prune -o -path /proc/thread-self -prune -o -type f -writable -print 2>/dev/null'
 # Limits of namespaces the writer owns. sys/user holds the namespace counts of an own user namespace,
 # which the kernel also checks against every parent, so they cannot be raised past the outer limits.
-PROC_ALLOWED='^/proc/sys/user/max_[a-z_]*_namespaces$|^/proc/sys/user/max_(fanotify|inotify)_[a-z]*$|^/proc/sys/net/|^/proc/sys/fs/mqueue/|^/proc/sys/kernel/(msg|sem|shm)|^/proc/sys/kernel/(ns_last_pid|pid_max|auto_msgmni)$|^/proc/pressure/'
+# Other files there are named one by one, so a new one of a newer kernel stops the tests until someone looks at it.
+PROC_ALLOWED='^/proc/sys/user/max_[a-z_]*_namespaces$|^/proc/sys/user/max_(fanotify|inotify)_[a-z]*$|^/proc/sys/user/max_binfmt_misc_interpreters$|^/proc/sys/net/|^/proc/sys/fs/mqueue/|^/proc/sys/kernel/(msg|sem|shm)|^/proc/sys/kernel/(ns_last_pid|pid_max|auto_msgmni)$|^/proc/pressure/'
 # Some Ubuntu kernels let container root set kernel.cad_pid for the whole host, which only moves
 # the Ctrl-Alt-Del signal to a process of the container. Every other file stops the server.
 PROC_KNOWN='^/proc/sys/kernel/cad_pid$'
