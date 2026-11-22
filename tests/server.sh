@@ -93,7 +93,14 @@ pod exec -i --user dev orca-pods-server bash < tests/server-inside.sh
 pod exec -i --user dev orca-pods-server bash <<'SH'
 code=$(orca-pair ws://127.0.0.1:6768 | tail -n 1)
 for _ in $(seq 30); do orca-ide status --json 2>/dev/null | grep -q '"state": "ready"' && break; sleep 2; done
-ORCA_PAIRING_CODE=$code orca-ide status --json | jq -e '.ok and .result.target.kind == "environment"' >/dev/null || { echo "FAIL  rewritten code"; exit 1; }
+# Right after the restarts of the update Orca can still refuse a while, the error says why.
+ok=""
+for _ in $(seq 10); do
+  out=$(ORCA_PAIRING_CODE=$code orca-ide status --json 2>&1) || true
+  printf '%s' "$out" | jq -e '.ok and .result.target.kind == "environment"' >/dev/null 2>&1 && { ok=1; break; }
+  sleep 3
+done
+[ -n "$ok" ] || { echo "FAIL  rewritten code: $(printf '%s' "$out" | jq -c '.error // .result.target.kind' 2>/dev/null || echo 'no JSON')"; exit 1; }
 echo "OK    rewritten pairing code works"
 bad=$(printf '%s' "${code#*=}" | tr '_-' '/+' | base64 -d 2>/dev/null | jq -c '.deviceToken = "AAAA"' | base64 -w0 | tr '/+' '_-' | tr -d '=')
 if ORCA_PAIRING_CODE="${code%%=*}=$bad" orca-ide status --json 2>/dev/null | jq -e .ok >/dev/null; then echo "FAIL  forged token accepted"; exit 1; fi

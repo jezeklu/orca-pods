@@ -1,6 +1,6 @@
 name: release
 
-# A tag builds everything and drafts a release, which waits for ./sign-release.sh on the host.
+# A tag runs every test (tests.yml), builds everything and drafts a release, which waits for ./sign-release.sh on the host.
 # Images are pushed only from a published release: when it is published, and weekly from the
 # latest one to pick up Debian security updates.
 on:
@@ -16,8 +16,14 @@ permissions:
   contents: read
 
 jobs:
+  # Every test, about an hour, so a broken tag drafts nothing.
+  tests:
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/tests.yml
+
   draft:
     if: github.event_name == 'push'
+    needs: tests
     runs-on: ubuntu-latest
     permissions:
       contents: write

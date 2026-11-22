@@ -60,7 +60,7 @@ cd repo
 # The client packages include those of the server.
 cmd=$(sh op-client.sh packages)
 . /etc/os-release
-echo "$PRETTY_NAME, SELinux: $(getenforce 2>/dev/null || echo no)"
+echo "$PRETTY_NAME, kernel $(uname -r), SELinux: $(getenforce 2>/dev/null || echo no)"
 echo "$(nproc) CPUs, $(free -g | awk '\''/^Mem:/ { print $2 }'\'')G memory, disk: $(df -h / | awk '\''NR == 2 { print $2 }'\'')"
 case "$ID" in
   # A new kernel would drop the modules of the running one, the bridge needs them.
