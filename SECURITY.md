@@ -10,4 +10,4 @@ Include the host distribution, the Podman version, the steps to reproduce and wh
 
 ## Supported versions
 
-Only the latest release and the latest images (`latest`, `server`) get fixes.
+Only the latest release and the latest images (`client`, `server`) get fixes.

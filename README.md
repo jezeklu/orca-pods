@@ -1,6 +1,6 @@
 # orca-pods
 
-[![image](https://github.com/jezeklu/orca-pods/actions/workflows/image.yml/badge.svg)](https://github.com/jezeklu/orca-pods/actions/workflows/image.yml)
+[![release](https://github.com/jezeklu/orca-pods/actions/workflows/release.yml/badge.svg)](https://github.com/jezeklu/orca-pods/actions/workflows/release.yml)
 [![client image](https://img.shields.io/docker/image-size/jezeklu/orca-pods/latest?label=client%20image)](https://hub.docker.com/r/jezeklu/orca-pods/tags?name=latest)
 [![server image](https://img.shields.io/docker/image-size/jezeklu/orca-pods/server?label=server%20image)](https://hub.docker.com/r/jezeklu/orca-pods/tags?name=server)
 [![Podman](https://img.shields.io/badge/podman-rootless%2C%205.0%2B-892CA0?logo=podman&logoColor=white)](https://podman.io)
@@ -153,6 +153,8 @@ op-client orca-update 1.4.255    # a given version, also the way back
 `op-client status` shows which version the client runs and which is the latest. While the client runs, it also asks every paired server for its Orca version over Tailscale and prints the command that matches the client to it. The pairings live in the vault, so a closed client cannot reach the servers: start it, or run `op-server status` on the server.
 
 A short container behind the same firewall downloads the release, checks its SHA-512 and extracts it, the host never runs the AppImage. The current and the previous version stay on disk. Orca's own update prompt cannot apply inside the container, use `orca-update` instead.
+
+The image is pulled at every start, so it always carries the latest security updates. The script itself changes only on request: the start and `op-client status` tell when a newer release exists, and `op-client self-update` installs it once its signature matches `~/.config/orca-pods/allowed_signers`, see [Release signing](#release-signing). `op-client version` prints the installed one.
 
 The vault is mounted only inside Podman's user namespace, so ordinary host processes see `vault-open/` empty. To look into it, close the client and run `op-client shell`, or `op-client shell -- ls -la` for one command. It asks for the vault password every time and starts a short container with the vault at `/home/dev`, without a network, capabilities or a writable system. The vault is locked again when the shell ends. While the client runs, the shell refuses to start.
 
@@ -400,7 +402,9 @@ op-server orca-update   # only when a newer Orca is available, terminals keep ru
 | `PODS_RUNTIMES`, `PODS_TOOLS` | Whenever you want | `op-server update` on a running server with the current image, after a new image the restart installs them |
 | Orca | Whenever you want | `op-server orca-update`, or `orca-update` in a container terminal |
 | Orca rollback | After a bad version | `op-server orca-update <version>`, the previous version stays on disk |
-| Host script | When you release it | `op-server self-update`, changes nothing without a valid signature |
+| Host script | When a release is published | `op-server self-update`, changes nothing without a valid signature |
+
+`op-server status` tells when the registry holds a newer image, such as the weekly rebuild with security updates, and when a newer release of the script exists. Both checks only read from the registry and from GitHub, and stay silent when offline.
 
 ### Data lifetime
 
@@ -418,7 +422,7 @@ op-server orca-update   # only when a newer Orca is available, terminals keep ru
 
 ### Release signing
 
-On the host, after reviewing the code, run `./sign-release.sh ~/.ssh/<key>` and upload `dist/op-server`, `dist/op-server.sig` and `dist/op-client` to the release. The public key goes into `~/.config/orca-pods/allowed_signers`. For the releases of this repository it is:
+`self-update` of both roles replaces the script only with a release signed by a key from `~/.config/orca-pods/allowed_signers`. For the releases of this repository it is:
 
 ```sh
 mkdir -p ~/.config/orca-pods
@@ -426,6 +430,8 @@ echo 'orca-pods ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDXHD6ZeJbRTkk/Fz7VdrTl0q2Cl
 ```
 
 Its fingerprint is `SHA256:WKyUvoglDCAUU5y5ihiclriRkC22NoJ7nD4UOBT85oI`. Releases signed with your own key need your own line instead. The container never sees this file, so code written in the container cannot reach the host unsigned.
+
+The private key stays on the maintainer's machine. CI builds a release but cannot publish it, see [CI/CD](#cicd).
 
 ### Server security boundary
 
@@ -471,7 +477,18 @@ The VM has 2 CPUs, 4 GB of memory and a 20 GB disk. `PODS_VM_CPUS`, `PODS_VM_MEM
 
 ## CI/CD
 
-`.github/workflows/image.yml` builds both images, smoke-tests them and publishes them to Docker Hub with the tags `latest`, `server` and a date. Set these repository secrets:
+One version covers both roles and both images. `.github/workflows/release.yml` does the rest:
+
+| When | What happens |
+|---|---|
+| A tag `vX.Y.Z` is pushed | Unit tests, `op-client` and `op-server` built into a draft release, both images built and smoke-tested. Nothing is published. |
+| The maintainer runs `./sign-release.sh ~/.ssh/<key>` on the checked-out tag | The local build must match the files of the draft byte for byte. Both scripts are signed, the signatures uploaded and the release published. |
+| The release is published | Both images are built from its tag and pushed. |
+| Every Monday | Both images are rebuilt from the latest published release and pushed, which picks up Debian security updates. No new release, nothing to sign. |
+
+The images go to Docker Hub as `client`, `client-X.Y.Z` and `client-YYYYMMDD`, and the same with `server`. `latest` is another name for `client`.
+
+Images are not signed, they only ever run inside the container. A tag alone publishes nothing, but anyone who can publish a release in the repository can publish images, so restrict who can create `v*` tags and releases. Set these repository secrets:
 
 | Name | Value |
 |---|---|

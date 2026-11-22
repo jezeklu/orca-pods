@@ -1,28 +1,60 @@
-name: image
+name: release
 
+# A tag builds everything and drafts a release, which waits for ./sign-release.sh on the host.
+# Images are pushed only from a published release: when it is published, and weekly from the
+# latest one to pick up Debian security updates.
 on:
   push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - image/**
-      - server/**
-      - .github/workflows/image.yml
+    tags: ["v*"]
+  release:
+    types: [published]
   schedule:
-    - cron: "17 4 * * 1" # weekly, picks up Debian security updates
+    - cron: "17 4 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  publish:
+  draft:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/unit.sh
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PODS_VERSION: ${{ github.ref_name }}
+        run: |
+          ./build.sh
+          gh release create "$PODS_VERSION" --draft --verify-tag --generate-notes --title "$PODS_VERSION" \
+            dist/op-client dist/op-server
+
+  images:
     runs-on: ubuntu-latest
     env:
       IMAGE: jezeklu/orca-pods
     steps:
+      - name: Release to build
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_TAG: ${{ github.event.release.tag_name || (github.event_name == 'push' && github.ref_name) || '' }}
+        run: |
+          tag=${EVENT_TAG:-$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)}
+          printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "date=$(date -u +%Y%m%d)"
+          } >>"$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build
@@ -66,16 +98,16 @@ jobs:
             test "$(command -v podman)" = /usr/local/bin/podman
           '
 
-      - name: Date tag
-        id: date
-        run: echo "tag=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
-
+      # A tag alone pushes nothing, the release is not signed yet.
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: github.event_name != 'push'
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # latest is what op-client v0.1.0 pulls.
       - name: Push
+        if: github.event_name != 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -83,10 +115,13 @@ jobs:
           target: client
           push: true
           tags: |
+            ${{ env.IMAGE }}:client
+            ${{ env.IMAGE }}:client-${{ steps.release.outputs.version }}
+            ${{ env.IMAGE }}:client-${{ steps.release.outputs.date }}
             ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ steps.date.outputs.tag }}
 
       - name: Push server
+        if: github.event_name != 'push'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -95,4 +130,5 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:server
-            ${{ env.IMAGE }}:server-${{ steps.date.outputs.tag }}
+            ${{ env.IMAGE }}:server-${{ steps.release.outputs.version }}
+            ${{ env.IMAGE }}:server-${{ steps.release.outputs.date }}
