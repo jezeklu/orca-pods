@@ -8,6 +8,9 @@ PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 export PATH
 
 MIN_PODMAN=5.0.0
+# build.sh writes the release tag here.
+VERSION=dev
+RELEASES=https://github.com/jezeklu/orca-pods/releases
 
 prog=${0##*/}
 
@@ -22,11 +25,7 @@ case "$INSTANCE" in
   ""|*[!a-z0-9-]*|-*|secrets) echo "Invalid instance name '$INSTANCE', use lowercase letters, digits and dashes." >&2; exit 1 ;;
 esac
 
-case "$ROLE" in
-  server) tag=server ;;
-  *) tag=latest ;;
-esac
-IMAGE="${PODS_IMAGE:-docker.io/jezeklu/orca-pods:$tag}"
+IMAGE="${PODS_IMAGE:-docker.io/jezeklu/orca-pods:$ROLE}"
 PULL="${PODS_PULL:-1}"
 STORE="${PODS_STORE:-${XDG_DATA_HOME:-$HOME/.local/share}/orca-pods}/$INSTANCE"
 # Must stay under /run/user, pasta cannot open a runroot from /home under SELinux.
@@ -188,6 +187,67 @@ update_image() {
     echo "Cannot pull $IMAGE and no local image exists: ${err##*Error: }" >&2
     exit 1
   fi
+}
+
+# The tag of the latest published release, read from a redirect. Short timeouts, a start may be offline.
+latest_release() {
+  url=$(curl -fsS --connect-timeout 2 -m 4 -o /dev/null -w '%{redirect_url}' "$RELEASES/latest" 2>/dev/null) || return 1
+  case "${url##*/}" in
+    v[0-9]*) echo "${url##*/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+release_line() { # latest
+  if [ "$VERSION" = dev ]; then
+    echo "Script: built from a checkout${1:+, the latest release is $1}."
+  elif [ -z "$1" ]; then
+    echo "Script: $VERSION, the latest release is unknown."
+  elif [ "$1" = "$VERSION" ]; then
+    echo "Script: $VERSION, the latest release."
+  else
+    echo "Script: $VERSION, release $1 is available: $prog self-update"
+  fi
+}
+
+# True when the registry holds another image than the local one, such as the weekly rebuild with
+# security updates. Reads only the manifest list, which names the digest a pull would store.
+image_outdated() {
+  digest=$(pod image inspect -f '{{.Digest}}' orca-pods 2>/dev/null) || return 1
+  list=$(timeout 10 podman manifest inspect "$IMAGE" 2>/dev/null) || return 1
+  case "$list" in
+    *'"manifests"'*) ;;
+    *) return 1 ;;
+  esac
+  case "$list" in
+    *"\"$digest\""*) return 1 ;;
+  esac
+}
+
+# Signature first, the new file is never run before it. The trusted key stays on the host,
+# the container cannot reach it, so code from the container does not get here unsigned.
+self_update() {
+  name=op-$ROLE
+  signers=$(dirname "$CONFIG")/allowed_signers
+  [ -f "$signers" ] || { echo "$signers with the signing public key is missing, see README." >&2; exit 1; }
+  self=$(readlink -f "$0")
+  work=$(mktemp -d)
+  trap 'rm -rf "$work"' EXIT
+  if [ -n "${PODS_RELEASE_DIR:-}" ]; then
+    cp "$PODS_RELEASE_DIR/$name" "$PODS_RELEASE_DIR/$name.sig" "$work/"
+  else
+    for file in "$name" "$name.sig"; do
+      curl -fsSL -o "$work/$file" "$RELEASES/latest/download/$file"
+    done
+  fi
+  if ! ssh-keygen -Y verify -f "$signers" -I orca-pods -n orca-pods -s "$work/$name.sig" \
+    <"$work/$name" >/dev/null 2>&1; then
+    echo "Invalid signature, nothing changed." >&2
+    exit 1
+  fi
+  chmod +x "$work/$name"
+  mv "$work/$name" "$self"
+  echo "Script updated from a signed release: $("$self" version)"
 }
 
 os_family() {

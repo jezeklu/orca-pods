@@ -480,25 +480,40 @@ done
 ok "seccomp: the profile in dist/op-server is the repository file" "$(PODS_SOURCED=1 sh -c '. dist/op-server; seccomp_profile' 2>&1 | cmp -s - server/seccomp-nested.json; echo $?)" 0
 
 # Signed self-update: only a release with a valid signature replaces the script.
-mkdir -p "$tmp/rel" "$tmp/cfg"
+mkdir -p "$tmp/cfg"
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/key"
-printf 'orca-pods %s\n' "$(cat "$tmp/key.pub")" >"$tmp/cfg/allowed_signers"
-cp dist/op-server "$tmp/rel/op-server"
-echo '# new' >>"$tmp/rel/op-server"
-ssh-keygen -q -Y sign -f "$tmp/key" -n orca-pods "$tmp/rel/op-server" </dev/null
-cp dist/op-server "$tmp/deployed"
-su_update() { PODS_CONFIG="$tmp/cfg/server.env" PODS_RELEASE_DIR="$tmp/rel" PODS_STORE="$tmp/store" "$tmp/deployed" self-update >/dev/null 2>&1; }
-su_update; ok "valid signature" $? 0
-ok "script replaced" "$(tail -n 1 "$tmp/deployed")" '# new'
-cp dist/op-server "$tmp/deployed"
-echo '# tampered' >>"$tmp/rel/op-server"
-su_update; ok "tampered file rejected" $? 1
-ok "script unchanged" "$(cmp -s dist/op-server "$tmp/deployed"; echo $?)" 0
 ssh-keygen -q -t ed25519 -N '' -f "$tmp/other"
-cp dist/op-server "$tmp/rel/op-server"
-rm -f "$tmp/rel/op-server.sig"
-ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$tmp/rel/op-server" </dev/null
-su_update; ok "unknown key rejected" $? 1
+printf 'orca-pods %s\n' "$(cat "$tmp/key.pub")" >"$tmp/cfg/allowed_signers"
+for role in server client; do
+  rel=$tmp/rel-$role
+  mkdir -p "$rel"
+  cp "dist/op-$role" "$rel/op-$role"
+  echo '# new' >>"$rel/op-$role"
+  ssh-keygen -q -Y sign -f "$tmp/key" -n orca-pods "$rel/op-$role" </dev/null
+  cp "dist/op-$role" "$tmp/deployed"
+  su_update() { PODS_CONFIG="$tmp/cfg/$role.env" PODS_RELEASE_DIR="$rel" PODS_STORE="$tmp/store" "$tmp/deployed" self-update >/dev/null 2>&1; }
+  su_update; ok "$role: valid signature" $? 0
+  ok "$role: script replaced" "$(tail -n 1 "$tmp/deployed")" '# new'
+  cp "dist/op-$role" "$tmp/deployed"
+  echo '# tampered' >>"$rel/op-$role"
+  su_update; ok "$role: tampered file rejected" $? 1
+  ok "$role: script unchanged" "$(cmp -s "dist/op-$role" "$tmp/deployed"; echo $?)" 0
+  cp "dist/op-$role" "$rel/op-$role"
+  rm -f "$rel/op-$role.sig"
+  ssh-keygen -q -Y sign -f "$tmp/other" -n orca-pods "$rel/op-$role" </dev/null
+  su_update; ok "$role: unknown key rejected" $? 1
+done
+
+# The release tag is written into the standalone files, and only there.
+ok "version of a checkout" "$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" ./op-client.sh version)" "op-client.sh dev"
+mkdir "$tmp/src"
+cp -r build.sh lib server op-client.sh op-server.sh "$tmp/src"
+PODS_VERSION=v9.8.7 "$tmp/src/build.sh"
+ok "version of a release" "$(PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" "$tmp/src/dist/op-server" version)" "op-server v9.8.7"
+release_line_of() { PODS_SOURCED=1 PODS_CONFIG="$tmp/none" PODS_STORE="$tmp/store" sh -c '. "$1"; release_line "$2"' sh "$tmp/src/dist/op-server" "$1"; }
+ok "release: current" "$(release_line_of v9.8.7)" "Script: v9.8.7, the latest release."
+ok "release: newer" "$(release_line_of v9.9.0)" "Script: v9.8.7, release v9.9.0 is available: sh self-update"
+ok "release: unknown" "$(release_line_of '')" "Script: v9.8.7, the latest release is unknown."
 
 # Every command main dispatches is described in help, so the help does not fall behind.
 for role in server client; do

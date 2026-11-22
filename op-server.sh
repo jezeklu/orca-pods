@@ -419,6 +419,8 @@ show_status() {
   proc_warning
   echo "Tailscale: $(tailscale_state || true)"
   orca_versions
+  ! image_outdated || echo "Image: a newer one is available, it may carry security updates: $prog update"
+  release_line "$(latest_release || true)"
   echo "Paired devices:"
   if devices=$(pod exec --user dev orca-pods-server orca-devices 2>/dev/null); then
     printf '%s\n' "$devices" | sed 's/^/  /'
@@ -505,32 +507,6 @@ update_all() {
   orca_versions
 }
 
-# Signature first, the new file is never run before it. The trusted key stays on the host,
-# the container cannot reach it, so code from the container does not get here unsigned.
-self_update() {
-  signers=$(dirname "$CONFIG")/allowed_signers
-  [ -f "$signers" ] || { echo "$signers with the signing public key is missing, see README." >&2; exit 1; }
-  self=$(readlink -f "$0")
-  work=$(mktemp -d)
-  trap 'rm -rf "$work"' EXIT
-  if [ -n "${PODS_RELEASE_DIR:-}" ]; then
-    cp "$PODS_RELEASE_DIR/op-server" "$PODS_RELEASE_DIR/op-server.sig" "$work/"
-  elif command -v gh >/dev/null; then
-    gh release download -R jezeklu/orca-pods -p op-server -p op-server.sig -D "$work"
-  else
-    for file in op-server op-server.sig; do
-      curl -fsSL -o "$work/$file" "https://github.com/jezeklu/orca-pods/releases/latest/download/$file"
-    done
-  fi
-  if ! ssh-keygen -Y verify -f "$signers" -I orca-pods -n orca-pods -s "$work/op-server.sig" \
-    <"$work/op-server" >/dev/null 2>&1; then
-    echo "Invalid signature, nothing changed." >&2
-    exit 1
-  fi
-  chmod +x "$work/op-server"
-  mv "$work/op-server" "$self"
-  echo "Script updated from a signed release."
-}
 
 write_unit() {
   mkdir -p "$(dirname "$UNIT")"
@@ -845,6 +821,8 @@ Updates
                       keep running, the previous version stays for a rollback.
   self-update         Replace this script with the latest release, only when its
                       signature matches allowed_signers next to the settings.
+  version             Version of this script. status tells when a newer release
+                      or a newer image is available.
 
 Maintenance
   test [URL]          Isolation tests while the server is stopped, no data used.
@@ -884,6 +862,7 @@ main() {
     update) update_all ;;
     orca-update) shift; orca_update "$@" ;;
     self-update) self_update ;;
+    version) echo "$prog $VERSION" ;;
     test) shift; run_tests "$@" ;;
     *) echo "Unknown command: $1. Run: $prog help" >&2; exit 1 ;;
   esac

@@ -15,7 +15,7 @@ Everything in the repository is in English: code, comments, script output, docum
 - `server/bin/`: helpers installed into the server image (`orca-serve`, `orca-update`, `gh`, `git-credential-pods`, …).
 - `dev.sh`: runs the client with a locally built image from `.local/` and paths from `client.env`.
 - `test.sh`, `tests/`: all tests, see below.
-- `sign-release.sh`: signs `dist/op-server` on the host for releases.
+- `sign-release.sh`: on the host, signs and publishes the release CI drafted for a tag. Signing never moves into CI.
 
 ## Code style
 

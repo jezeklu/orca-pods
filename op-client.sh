@@ -142,6 +142,7 @@ show_status() {
     echo "The client is not running."
     closed_client_net
     orca_line "$installed" "$(release version 2>/dev/null || true)"
+    release_line "$(latest_release || true)"
     echo "Servers: their pairings are in the vault, start the client or run op-server status on the server."
     return 0
   fi
@@ -149,6 +150,7 @@ show_status() {
   echo "The client is running."
   echo "Tailscale: $(tailscale_state || true)"
   orca_line "$installed" "$(pod exec orca-pods-client orca-release version 2>/dev/null || true)"
+  release_line "$(latest_release || true)"
   servers=$(paired_servers || true)
   [ -n "$servers" ] || { echo "Servers: none paired."; return 0; }
   printf '%s\n' "$servers" | while IFS="$(printf '\t')" read -r version name; do
@@ -234,6 +236,11 @@ run_client() {
   trap 'exit 130' INT TERM HUP
 
   update_image
+  # Every start pulls the image, the script is updated only on request.
+  if [ "$PULL" = 1 ] && [ "$VERSION" != dev ]; then
+    latest=$(latest_release || true)
+    [ -z "$latest" ] || [ "$latest" = "$VERSION" ] || echo "Release $latest of $prog is available: $prog self-update" >&2
+  fi
   pod image exists orca-pods || { echo "Image orca-pods is missing." >&2; exit 1; }
 
   net_up
@@ -295,7 +302,10 @@ While the client runs, from a second terminal
   status              Orca versions of the client and of the paired servers.
 
 While the client is closed
-  status              Orca version of the client.
+  status              Orca version of the client and whether a newer release of
+                      this script is available.
+  self-update         Replace this script with the latest release, only when its
+                      signature matches allowed_signers next to the settings.
   orca-update [VER]   Switch to the latest or the given Orca, for example the
                       version a server runs. The previous version stays.
   shell [-- CMD]      Open the vault and start a shell in it with no network,
@@ -305,6 +315,7 @@ Maintenance
   cleanup             Remove leftovers after a crash or kill -9.
   doctor              Check the requirements of this machine.
   packages            Print the command that installs the missing packages.
+  version             Version of this script.
   help                This help.
 
 Settings  $CONFIG
@@ -331,6 +342,8 @@ main() {
     login) tailscale_login ;;
     orca-update) shift; orca_update "$@" ;;
     status) show_status ;;
+    self-update) self_update ;;
+    version) echo "$prog $VERSION" ;;
     cleanup) teardown ;;
     *) echo "Unknown command: $1. Run: $prog help" >&2; exit 1 ;;
   esac
