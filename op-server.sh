@@ -773,6 +773,10 @@ run_tests() {
     inside_at dev "dev: Docker API on a unix socket, no TCP listener" 's=/run/user/30100/podman/podman.sock
       for _ in $(seq 20); do [ -S "$s" ] && break; sleep 1; done
       [ "$(stat -c %U "$s")" = dev ] && ! ss -Hltnp | grep -q podman'
+    inside_at dev "dev: docker compose starts and removes a project" 'd=$(mktemp -d) && cd "$d" || exit 1
+      printf "services:\n  one:\n    image: docker.io/library/alpine\n    command: sleep infinity\n" >compose.yaml
+      docker compose -p orca-pods-compose up -d && [ "$(docker compose -p orca-pods-compose ps -q | wc -l)" = 1 ]; r=$?
+      docker compose -p orca-pods-compose down -t 0; rm -rf "$d"; exit "$r"'
     nested_ids_check
   fi
 

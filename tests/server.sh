@@ -34,11 +34,11 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   test "$(id -u dev)" = 30100
   test "$(getent passwd dev | cut -d: -f7)" = /bin/bash || { echo "FAIL  login shell of dev"; exit 1; }
   test -r /usr/share/bash-completion/bash_completion || { echo "FAIL  bash-completion missing"; exit 1; }
-  for tool in git gh mc vim htop curl jq rg gcc make python3 uv mise node npm pnpm claude codex opencode \
+  for tool in git gh mc vim htop curl jq rg gcc make python3 uv mise node npm pnpm docker-compose claude codex opencode \
     Xvfb xauth dbus-launch ps tailscale tailscaled orca-update orca-restart orca-pair orca-devices orca-runtimes orca-skills orca-release git-credential-pods; do
     command -v "$tool" >/dev/null || { echo "FAIL  missing $tool"; exit 1; }
   done
-  node --version; pnpm --version; uv --version; mise --version
+  node --version; pnpm --version; uv --version; mise --version; docker-compose version
   su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/home/dev/.local/share/mise/shims:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
 pod run --rm -i --read-only --security-opt label=disable orca-pods sh <tests/server-image.sh

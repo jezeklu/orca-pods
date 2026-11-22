@@ -22,6 +22,8 @@ ARG UV_VERSION=0.13.7
 ARG UV_SHA256=c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
 ARG MISE_VERSION=2026.10.19
 ARG MISE_SHA256=3162760f40b6b5f706c60641e4ef5ee7322bc6c54f72fc26a7111b337aa18d9d
+ARG COMPOSE_VERSION=5.8.0
+ARG COMPOSE_SHA256=b8840f5008c447f41fce0a57ae3adeab42c89b1eb6e6012524bcabbfb4ffbaf6
 RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
       https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
@@ -35,6 +37,12 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && tar xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin \
     && curl -fsSL --retry 5 "https://github.com/jdx/mise/releases/download/v$MISE_VERSION/mise-v$MISE_VERSION-linux-x64" -o /usr/local/bin/mise \
     && echo "$MISE_SHA256  /usr/local/bin/mise" | sha256sum -c - && chmod +x /usr/local/bin/mise \
+    # Podman looks for its compose provider here, so "docker compose" and "podman compose" both find it.
+    && mkdir -p /usr/local/lib/docker/cli-plugins \
+    && curl -fsSL --retry 5 "https://github.com/docker/compose/releases/download/v$COMPOSE_VERSION/docker-compose-linux-x86_64" -o /usr/local/lib/docker/cli-plugins/docker-compose \
+    && echo "$COMPOSE_SHA256  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
+    && chmod +x /usr/local/lib/docker/cli-plugins/docker-compose \
+    && ln -s /usr/local/lib/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose \
     && NODE=$(curl -fsSL https://nodejs.org/dist/index.json | jq -r '[.[] | select(.version | startswith("v26."))][0].version') \
     && curl -fsSL "https://nodejs.org/dist/$NODE/node-$NODE-linux-x64.tar.xz" -o "/tmp/node-$NODE-linux-x64.tar.xz" \
     && curl -fsSL "https://nodejs.org/dist/$NODE/SHASUMS256.txt" | grep " node-$NODE-linux-x64.tar.xz$" | (cd /tmp && sha256sum -c -) \
