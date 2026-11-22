@@ -456,7 +456,7 @@ The private key stays on the maintainer's machine. CI builds a release but canno
 
 ## Tests
 
-Everything runs locally, GitHub Actions runs checks on pull requests and VM tests on demand.
+Everything runs locally. GitHub Actions runs the unit and distribution tests on pull requests, and every test in `.github/workflows/tests.yml` every evening, before each release draft and on demand: per distribution a VM for the client, the server role and the server with containers inside, about an hour.
 
 ```sh
 ./test.sh              # unit tests, four distributions in containers, isolation tests on this machine
@@ -481,7 +481,7 @@ One version covers both roles and both images. `.github/workflows/release.yml` d
 
 | When | What happens |
 |---|---|
-| A tag `vX.Y.Z` is pushed | Unit tests, `op-client` and `op-server` built into a draft release, both images built and smoke-tested. Nothing is published. |
+| A tag `vX.Y.Z` is pushed | Every test of `tests.yml`, about an hour. Only when they pass, `op-client` and `op-server` are built into a draft release. Both images are built and smoke-tested. Nothing is published. |
 | The maintainer runs `./sign-release.sh ~/.ssh/<key>` on the checked-out tag | The local build must match the files of the draft byte for byte. Both scripts are signed, the signatures uploaded and the release published. |
 | The release is published | Both images are built from its tag and pushed. |
 | Every Monday | Both images are rebuilt from the latest published release and pushed, which picks up Debian security updates. No new release, nothing to sign. |

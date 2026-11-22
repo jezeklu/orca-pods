@@ -1,0 +1,80 @@
+name: tests
+
+# Every local test: unit, distributions, and in a VM per distribution the client, the server role
+# and the server with containers inside. A VM tests the firewall against a real host, which a runner
+# cannot. Takes about an hour. Runs every evening, before a release draft (release.yml), by hand,
+# and on pull requests that change this workflow.
+on:
+  schedule:
+    - cron: "0 19 * * *" # 20:00 CET, 21:00 CEST
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths:
+      - .github/workflows/tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/unit.sh
+
+  distro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: tests/distro.sh
+        env:
+          PODS_CT: docker
+
+  vm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [fedora, debian, ubuntu, archlinux]
+        role: [client, server, nested]
+    name: vm (${{ matrix.distro }}, ${{ matrix.role }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The server VM grows to about 14 GB. The larger of / and /mnt holds it.
+      - name: Disk
+        run: |
+          df -h / /mnt 2>/dev/null || true
+          dir=$HOME/vm
+          if [ -d /mnt ] && [ "$(df -k --output=avail /mnt | tail -n 1)" -gt "$(df -k --output=avail / | tail -n 1)" ]; then
+            sudo mkdir -p /mnt/vm
+            sudo chown "$(id -u):$(id -g)" /mnt/vm
+            dir=/mnt/vm
+          fi
+          echo "PODS_VM_DIR=$dir" >>"$GITHUB_ENV"
+
+      - name: QEMU
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get -qq install -y --no-install-recommends qemu-system-x86 qemu-utils
+          sudo chmod 666 /dev/kvm
+
+      - name: Tests
+        env:
+          ROLE: ${{ matrix.role }}
+          DISTRO: ${{ matrix.distro }}
+          PODS_VM_CPUS: "4"
+          PODS_VM_MEMORY: 8G
+          PODS_VM_DISK: 40G
+        run: |
+          case "$ROLE" in
+            client) tests/vm.sh "$DISTRO" ;;
+            server) PODS_VM_SERVER=1 tests/vm.sh "$DISTRO" ;;
+            nested) PODS_VM_SERVER=1 PODS_CONTAINERS=1 tests/vm.sh "$DISTRO" ;;
+          esac
+
+      - name: Disk after
+        if: always()
+        run: df -h / /mnt 2>/dev/null || true
