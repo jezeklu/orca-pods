@@ -29,7 +29,8 @@ Everything in the repository is in English: code, comments, script output, docum
 
 These are the point of the project. Do not weaken them, and flag any change that touches them:
 
-- The container never gets the Docker or Podman socket, `~/.ssh`, the GPG agent or any host credentials.
+- The container never gets the Docker or Podman socket of the host, `~/.ssh`, the GPG agent or any host credentials. The socket of the inner Podman of `dev` in a server with `PODS_CONTAINERS=1` is allowed.
+- Nested mode (`PODS_CONTAINERS=1`): its flags in `run_container`, the seccomp profiles in `server/seccomp-*.json`, the image and home checks and the port 80 rule count as invariants. Any change needs `PODS_CONTAINERS=1 ./test.sh server` on a host or VM with the larger subordinate-ID range.
 - The firewall lives in the rootless network namespace, outside the container's reach. Neither role starts without it. The container must not reach the LAN, the VPN or host services.
 - The server container gets only a read-only secrets folder and `~/.gitconfig` from the host. The host never executes what the container wrote. Host updates come only from a signed release.
 - No secrets, tokens, pairing codes, real hostnames, private paths or personal data in the repository, in tests or in examples. Use generic placeholders such as `example-user`, `example-org` or `server`.
@@ -43,6 +44,7 @@ Run what fits the change before you finish:
 ./test.sh unit         # always: unit tests and shellcheck, fast
 ./test.sh              # unit tests, four distributions, client isolation on this machine
 ./test.sh server       # server role changes: image, isolation and end-to-end tests
+PODS_CONTAINERS=1 ./test.sh server  # nested mode changes, needs the larger range from doctor
 ./test.sh vm [distro]  # firewall, network option or mount changes
 ```
 

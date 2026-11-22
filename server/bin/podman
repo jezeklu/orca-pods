@@ -1,0 +1,16 @@
+#!/bin/sh
+# Containers work only in a server started with PODS_CONTAINERS=1, which writes the marker.
+# A hint, not a control: /usr/bin/podman gives its own error without the setting.
+set -eu
+if [ ! -e /run/orca-pods/nested ]; then
+  echo "Containers need PODS_CONTAINERS=1, see README." >&2
+  exit 1
+fi
+if [ "$(id -u)" = 30100 ]; then
+  # The API service needs its socket directory and pulls need storage/tmp. Root of a nested
+  # container that does not map dev has to cross the store to its intermediate mount point.
+  store=/home/dev/.local/share/containers
+  mkdir -p /run/user/30100/podman "$store/storage/tmp"
+  chmod 711 "$store" "$store/storage"
+fi
+exec /usr/bin/podman "$@"

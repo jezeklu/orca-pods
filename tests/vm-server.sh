@@ -13,6 +13,8 @@ PODS_PORT=16769
 PODS_PULL=0
 PODS_SECRETS_DIR="$sec"
 CFG
+# The unit reads only the settings file.
+[ -z "${PODS_CONTAINERS:-}" ] || echo "PODS_CONTAINERS=$PODS_CONTAINERS" >>"$cfg"
 export PODS_CONFIG="$cfg"
 ./op-server.sh install
 [ "$(systemctl --user is-enabled orca-pods-server-test.service)" = enabled ]
@@ -22,7 +24,10 @@ systemctl --user stop orca-pods-server-test.service
 PODS_SOURCED=1 sh -c '. ./op-server.sh; prepare_store; ! running'
 systemctl --user start orca-pods-server-test.service
 systemctl --user is-active orca-pods-server-test.service
-./op-server.sh status
+st=$(./op-server.sh status 2>&1)
+printf '%s\n' "$st"
+# A warning of the start under systemd must show in status.
+[ ! -s .local/proc-warning ] || printf '%s\n' "$st" | grep -q '^WARNING: this kernel'
 # Orca takes a moment after the unit reports active.
 for _ in $(seq 60); do
   curl -sS -m 3 -o /dev/null http://127.0.0.1:16769/ 2>/dev/null && break

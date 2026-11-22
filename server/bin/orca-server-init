@@ -3,6 +3,18 @@
 # Fixed, the image PATH starts in the home of dev. tailscaled and what it runs inherit it.
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
+# Containers inside the server (PODS_CONTAINERS=1): the runtime directory of dev and the marker
+# for the podman wrapper. Root holds no CAP_CHOWN, so dev creates its directory itself.
+if [ "${PODS_NESTED:-}" = 1 ]; then
+  (
+    set -e
+    mkdir -p /run/user /run/orca-pods
+    chmod 1777 /run/user
+    setpriv --reuid 30100 --regid 30100 --clear-groups mkdir -m 700 /run/user/30100
+    chmod 755 /run/user
+    touch /run/orca-pods/nested
+  ) || { echo "The runtime directory for containers could not be made." >&2; exit 1; }
+fi
 tailscaled --statedir=/state &
 pid=$!
 trap 'kill "$pid"' TERM INT

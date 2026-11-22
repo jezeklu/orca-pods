@@ -4,6 +4,8 @@
 #   tests/vm.sh [fedora|debian|ubuntu|archlinux…]   Fedora without an argument, Ubuntu is LTS 26.04
 #   tests/vm.sh clean                               remove VMs and downloaded images
 #   PODS_VM_SERVER=1 tests/vm.sh …                  also the server role and its systemd unit
+#   PODS_VM_SERVER=1 PODS_CONTAINERS=1 tests/vm.sh …  the server role with containers inside, the VM adds
+#                                                    the range doctor prints
 # Settings:
 #   PODS_VM_DISK=20G, PODS_VM_MEMORY=4G, PODS_VM_CPUS=2  size of the VM
 #   PODS_VM_DIR=/path                                    VMs and images elsewhere, default .local/vm
@@ -21,6 +23,11 @@ case "$MEMORY" in *[!0-9GM]*|[!1-9]*|*[0-9]) echo "PODS_VM_MEMORY is a size such
 case "$CPUS" in *[!0-9]*|[!1-9]*) echo "PODS_VM_CPUS is a number such as 4." >&2; exit 1 ;; esac
 case "$VM" in /*) ;; *) echo "PODS_VM_DIR must be an absolute path." >&2; exit 1 ;; esac
 case "$KEEP" in 0|1) ;; *) echo "PODS_VM_KEEP is 0 or 1." >&2; exit 1 ;; esac
+case "${PODS_CONTAINERS:-}" in
+  "") ;;
+  1) [ -n "${PODS_VM_SERVER:-}" ] || { echo "PODS_CONTAINERS=1 needs PODS_VM_SERVER=1." >&2; exit 1; } ;;
+  *) echo "PODS_CONTAINERS is 1 or empty." >&2; exit 1 ;;
+esac
 SSH_PORT=20222
 SEED_PORT=20280
 
@@ -63,6 +70,13 @@ case "$ID" in
 esac
 grep -q "^$(id -un):" /etc/subuid ||
   sudo usermod --add-subuids 100000-165535 --add-subgids 100000-165535 "$(id -un)"
+if [ "${PODS_CONTAINERS:-}" = 1 ]; then
+  # The command doctor prints, run the way the maintainer runs it, then the running map grows.
+  add=$(PODS_CONFIG=/dev/null sh op-server.sh doctor 2>&1 | sed -n "s/^ *sudo usermod /usermod /p")
+  [ -n "$add" ] && eval "sudo $add"
+  podman system migrate
+  PODS_CONFIG=/dev/null sh op-server.sh doctor
+fi
 # A public address of the host, which the drop list of private ranges does not cover.
 sudo ip link add pods-public type dummy
 sudo ip addr add 203.0.113.7/32 dev pods-public
@@ -148,7 +162,9 @@ CFG
     | tar c --null -T - \
     | vm_ssh 'mkdir -p repo && tar x -C repo'
   rc=0
-  { [ -z "${PODS_VM_SERVER:-}" ] || echo "export PODS_VM_SERVER=1"; printf '%s' "$inner"; } | vm_ssh bash -s || rc=$?
+  { [ -z "${PODS_VM_SERVER:-}" ] || echo "export PODS_VM_SERVER=1"
+    [ -z "${PODS_CONTAINERS:-}" ] || echo "export PODS_CONTAINERS=1"
+    printf '%s' "$inner"; } | vm_ssh bash -s || rc=$?
   if [ "$KEEP" = 1 ]; then
     echo "The VM keeps running. Log in with: ssh -i $dir/key -p $SSH_PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pods@127.0.0.1"
     echo "It is deleted when it shuts down or on Ctrl-C."

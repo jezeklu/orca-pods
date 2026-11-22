@@ -1,0 +1,9 @@
+#!/bin/sh
+# Docker API of the Podman of dev for testcontainers and devcontainers, on a unix socket only.
+# They connect to the socket and start nothing, so it runs from the start of the server.
+# Until orca-server-init has written the marker, the podman wrapper fails and the loop tries again.
+set -u
+while :; do
+  podman system service --time=0 unix:///run/user/30100/podman/podman.sock
+  sleep 1
+done

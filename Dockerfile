@@ -29,6 +29,7 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y --no-install-recommends \
       gh mc htop ripgrep build-essential python3 xvfb xauth dbus-x11 procps \
       unzip xz-utils file openssl libxss1 libxfixes3 vim bash-completion \
+      podman passt uidmap nftables acl netavark aardvark-dns crun libcap2-bin podman-docker shellcheck \
     && curl -fsSL --retry 5 "https://github.com/astral-sh/uv/releases/download/$UV_VERSION/uv-x86_64-unknown-linux-gnu.tar.gz" -o /tmp/uv.tar.gz \
     && echo "$UV_SHA256  /tmp/uv.tar.gz" | sha256sum -c - \
     && tar xzf /tmp/uv.tar.gz --strip-components=1 -C /usr/local/bin \
@@ -43,11 +44,17 @@ RUN curl -fsSLo /usr/share/keyrings/githubcli-archive-keyring.gpg \
     && npx -y playwright install-deps chromium \
     && rm -rf /var/lib/apt/lists/* /tmp/* /root/.npm /root/.cache \
     && mkdir -p /etc/orca-pods /secrets && touch /etc/orca-pods/host.gitconfig \
-    && echo 'eval "$(mise activate bash)"' >> /etc/bash.bashrc
+    && echo 'eval "$(mise activate bash)"' >> /etc/bash.bashrc \
+    # Containers inside the server run without no-new-privileges, so no file may be setuid or setgid.
+    # newuidmap and newgidmap get file capabilities instead.
+    && find / -xdev -type f -perm /6000 -exec chmod ug-s {} + \
+    && setcap cap_setuid=ep /usr/bin/newuidmap && setcap cap_setgid=ep /usr/bin/newgidmap
 COPY server/bin/ /usr/local/bin/
 COPY server/gitconfig /etc/gitconfig
 COPY server/profile.sh /etc/profile.d/orca-pods.sh
 COPY server/mise.toml /etc/mise/config.toml
+COPY server/containers.conf /etc/containers/containers.conf
+COPY server/registries.conf /etc/containers/registries.conf.d/50-orca-pods.conf
 ENV PATH=/home/dev/.local/bin:/home/dev/.local/share/mise/shims:/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV PNPM_HOME=/home/dev/.local/share/pnpm
 CMD ["/usr/local/bin/orca-server-init"]

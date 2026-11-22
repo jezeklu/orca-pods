@@ -62,6 +62,8 @@ jobs:
               Xvfb tailscale orca-release orca-update orca-pair orca-runtimes git-credential-pods; do
               command -v "$tool"
             done
+            /usr/bin/podman --version
+            test "$(command -v podman)" = /usr/local/bin/podman
           '
 
       - name: Date tag

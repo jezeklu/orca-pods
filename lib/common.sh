@@ -107,8 +107,10 @@ table inet orca_pods {
     } drop
 NFT
   [ -z "$own" ] || echo "    ip daddr { $own } drop"
+  echo "    tcp dport 443 accept"
+  # Plain HTTP for apt and image builds in a server with containers inside, after every drop.
+  [ "$ROLE" != server ] || [ "${CONTAINERS:-}" != 1 ] || echo "    tcp dport 80 accept"
   cat <<'NFT'
-    tcp dport 443 accept
     meta l4proto udp accept
     drop
   }
@@ -118,6 +120,12 @@ NFT
   }
 }
 NFT
+}
+
+# Inside a server with PODS_CONTAINERS=1 its firewall blocks the same targets, so a pass proves less.
+NESTED_MARKER=/run/orca-pods/nested
+nested_note() {
+  [ ! -e "$NESTED_MARKER" ] || echo "WARNING: inside a server with containers the outer firewall also blocks the LAN and the host, so these checks prove less. The firewall test that counts is ./test.sh vm."
 }
 
 # Holds the rootless network namespace open, so the firewall exists before the workload starts.

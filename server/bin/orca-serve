@@ -13,16 +13,17 @@ serve() {
 }
 
 # A restart that hits serve while it starts leaves a child holding the profile lock.
-# The terminal daemon is a different process and stays.
+# The terminal daemon is a different process and stays. Processes of nested containers are visible
+# here too, so pkill and pgrep stay in the own PID namespace.
 clear_previous() {
-  pgrep -x orca-ide >/dev/null || return 0
-  pkill -TERM -x orca-ide
+  pgrep --ns $$ --nslist pid -x orca-ide >/dev/null || return 0
+  pkill --ns $$ --nslist pid -TERM -x orca-ide
   for _ in $(seq 10); do
-    pgrep -x orca-ide >/dev/null || return 0
+    pgrep --ns $$ --nslist pid -x orca-ide >/dev/null || return 0
     sleep 1
   done
-  pkill -KILL -x orca-ide
-  pkill -TERM -f 'orcad-server\.js'
+  pkill --ns $$ --nslist pid -KILL -x orca-ide
+  pkill --ns $$ --nslist pid -TERM -f 'orcad-server\.js'
   sleep 1
 }
 

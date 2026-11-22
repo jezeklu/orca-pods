@@ -41,6 +41,36 @@ pod run --rm --read-only --security-opt label=disable orca-pods sh -ec '
   node --version; pnpm --version; uv --version; mise --version
   su dev -s /bin/bash -lc "case :\$PATH: in *:/home/dev/.local/bin:*/home/dev/.local/share/mise/shims:*/opt/node/bin:*) ;; *) echo \"FAIL  login shell PATH: \$PATH\"; exit 1 ;; esac"
 '
+pod run --rm -i --read-only --security-opt label=disable orca-pods sh <tests/server-image.sh
+# The start of a nested server, without the larger map: the runtime directory, the marker and the wrapper.
+nested_init() {
+  pod rm -f orca-pods-image-test >/dev/null 2>&1 || true
+  pod run -d --name orca-pods-image-test --security-opt label=disable --tmpfs /run \
+    --cap-drop=all --cap-add=NET_ADMIN,SETUID,SETGID --device /dev/net/tun "$@" orca-pods >/dev/null
+  # orca-server-init starts tailscaled after its own steps.
+  for _ in $(seq 20); do pod exec --user dev orca-pods-image-test pgrep -x tailscaled >/dev/null 2>&1 && return; sleep 1; done
+  echo "FAIL  tailscaled did not start"; exit 1
+}
+nested_init --env PODS_NESTED=1
+out=$(pod exec --user dev orca-pods-image-test sh -c '
+  stat -c "%U %a" /run/user/30100 /run/orca-pods/nested /run/user
+  podman --version >/dev/null && echo ran
+  stat -c "%U %a" /run/user/30100/podman ~/.local/share/containers ~/.local/share/containers/storage ~/.local/share/containers/storage/tmp
+' 2>&1 | tr '\n' ' ')
+pod rm -f orca-pods-image-test >/dev/null
+if [ "$out" = "dev 700 root 644 root 755 ran dev 755 dev 711 dev 711 dev 755 " ]; then
+  echo "OK    nested start: runtime directory, marker and the store of dev"
+else
+  echo "FAIL  nested start: $out"; exit 1
+fi
+nested_init
+out=$(pod exec --user dev orca-pods-image-test sh -c '[ ! -e /run/orca-pods ] || echo marker; ls -A /run/user; podman --version 2>&1' | tr '\n' ' ')
+pod rm -f orca-pods-image-test >/dev/null
+if [ "$out" = "Containers need PODS_CONTAINERS=1, see README. " ]; then
+  echo "OK    default start: no marker, no runtime directory"
+else
+  echo "FAIL  default start: $out"; exit 1
+fi
 ./op-server.sh test
 fi
 
@@ -109,6 +139,28 @@ if PODS_SOURCED=1 sh -c '. ./op-server.sh; firewall_rules() { echo broken; }; pr
 fi
 if pod container exists orca-pods-server; then echo "FAIL  the container was created"; exit 1; fi
 echo "OK    no container with a broken firewall"
+
+if [ "${PODS_CONTAINERS:-}" = 1 ]; then
+  echo "--- nested mode refuses setuid files"
+  good=$(pod image inspect --format '{{.Id}}' orca-pods)
+  printf 'FROM %s\nRUN cp /bin/true /usr/local/bin/x && chmod u+s /usr/local/bin/x\n' "$good" \
+    | pod build -q --security-opt label=disable -t orca-pods-setuid -f - . >/dev/null
+  pod tag orca-pods-setuid orca-pods
+  refused=0
+  ./op-server.sh start 2>&1 | grep -q '^setid /usr/local/bin/x$' && refused=1
+  pod tag "$good" orca-pods
+  pod rmi orca-pods-setuid >/dev/null
+  [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  an image with a setuid file started"; exit 1; }
+  echo "OK    an image with a setuid file is refused"
+  for mode in 1:1:4755 "$DEV_IN_NS:1:2755"; do
+    pod unshare sh -c 'cp /bin/true "$1/x" && chown "${2%:*}" "$1/x" && chmod "${2##*:}" "$1/x"' sh "$STORE/home" "$mode"
+    refused=0
+    ./op-server.sh start 2>&1 | grep -q 'setuid or setgid files of container root' && refused=1
+    pod unshare rm -f "$STORE/home/x"
+    [ "$refused" = 1 ] && ! pod container exists orca-pods-server || { echo "FAIL  a home with $mode started"; exit 1; }
+    echo "OK    a home with a file $mode is refused"
+  done
+fi
 ./op-server.sh start
 
 echo "--- crash and recovery"
